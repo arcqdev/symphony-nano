@@ -4,6 +4,7 @@ defmodule SymphonyElixir.Config do
   """
 
   alias SymphonyElixir.Config.Schema
+  alias SymphonyElixir.StageRouting
   alias SymphonyElixir.Workflow
 
   @default_prompt_template """
@@ -60,6 +61,23 @@ defmodule SymphonyElixir.Config do
   end
 
   def max_concurrent_agents_for_state(_state_name), do: settings!().agent.max_concurrent_agents
+
+  @spec agent_backend() :: String.t()
+  def agent_backend do
+    settings!()
+    |> StageRouting.default_backend()
+  end
+
+  @spec backend_for_stage(String.t() | nil) :: String.t()
+  def backend_for_stage(stage) do
+    settings!()
+    |> StageRouting.backend_for_stage(stage)
+  end
+
+  @spec routed_stages(map()) :: [StageRouting.route()]
+  def routed_stages(issue) when is_map(issue) do
+    StageRouting.routed_stages(issue, settings!())
+  end
 
   @spec codex_turn_sandbox_policy(Path.t() | nil) :: map()
   def codex_turn_sandbox_policy(workspace \\ nil) do

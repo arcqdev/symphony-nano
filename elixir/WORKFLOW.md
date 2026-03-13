@@ -19,12 +19,12 @@ workspace:
   root: ~/code/symphony-workspaces
 hooks:
   after_create: |
-    git clone --depth 1 https://github.com/openai/symphony .
-    if command -v mise >/dev/null 2>&1; then
-      cd elixir && mise trust && mise exec -- mix deps.get
-    fi
+    ./hooks/create-worktree.sh
+  before_run: |
+    ./hooks/sync-worktree.sh
   before_remove: |
     cd elixir && mise exec -- mix workspace.before_remove
+    ./hooks/cleanup-workspace.sh
 agent:
   max_concurrent_agents: 10
   max_turns: 20

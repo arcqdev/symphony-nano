@@ -1,0 +1,28 @@
+{
+  "projects": {
+    "littlebrief": {
+      "repoPath": "/Users/eddie/dev/arcqdev/littlebrief",
+      "workflowPath": "/Users/eddie/dev/arcqdev/littlebrief/.symphony/WORKFLOW.md"
+    },
+    "lobster-list": {
+      "repoPath": "/Users/eddie/dev/arcqdev/lobster-list",
+      "workflowPath": "/Users/eddie/dev/arcqdev/lobster-list/.symphony/WORKFLOW.md"
+    },
+    "usecase4claw-execution": {
+      "repoPath": "/Users/eddie/dev/arcqdev/usecase4claw",
+      "workflowPath": "/Users/eddie/dev/arcqdev/usecase4claw/.symphony/WORKFLOW.md"
+    },
+    "openclaw-command-center-execution": {
+      "repoPath": "/Users/eddie/dev/arcqdev/openclaw-command-center",
+      "workflowPath": "/Users/eddie/dev/arcqdev/openclaw-command-center/.symphony/WORKFLOW.md"
+    },
+    "littlebrief-execution": {
+      "repoPath": "/Users/eddie/dev/arcqdev/littlebrief",
+      "workflowPath": "/Users/eddie/dev/arcqdev/littlebrief/.symphony/WORKFLOW.md"
+    },
+    "lobster-list-execution": {
+      "repoPath": "/Users/eddie/dev/arcqdev/lobster-list",
+      "workflowPath": "/Users/eddie/dev/arcqdev/lobster-list/.symphony/WORKFLOW.md"
+    }
+  }
+}

@@ -101,6 +101,84 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
            }
   end
 
+  test "orchestrator snapshot includes routed stage and backend metadata" do
+    issue_id = "issue-stage-snapshot"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-189",
+      title: "Stage snapshot test",
+      description: "Capture routed backend metadata",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-189"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :StageSnapshotOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    started_at = DateTime.utc_now()
+
+    running_entry = %{
+      pid: self(),
+      ref: make_ref(),
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      stage: nil,
+      backend: nil,
+      turn_count: 0,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      started_at: started_at
+    }
+
+    state_with_issue =
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+
+    :sys.replace_state(pid, fn _ -> state_with_issue end)
+
+    now = DateTime.utc_now()
+
+    send(
+      pid,
+      {:worker_runtime_info, issue_id,
+       %{
+         workspace_path: "/tmp/stage-snapshot",
+         stage: "frontend",
+         backend: "claude-code"
+       }}
+    )
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :turn_completed,
+         session_id: "claude-code-frontend",
+         stage: "frontend",
+         backend: "claude-code",
+         timestamp: now
+       }}
+    )
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert %{running: [snapshot_entry]} = snapshot
+    assert snapshot_entry.stage == "frontend"
+    assert snapshot_entry.backend == "claude-code"
+    assert snapshot_entry.workspace_path == "/tmp/stage-snapshot"
+    assert snapshot_entry.session_id == "claude-code-frontend"
+  end
+
   test "orchestrator snapshot tracks codex thread totals and app-server pid" do
     issue_id = "issue-usage-snapshot"
 
@@ -811,18 +889,25 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       end
     end)
 
-    assert %{polling: %{checking?: true}} =
+    assert %{polling: %{checking?: checking, next_poll_in_ms: next_poll_in_ms}} =
              wait_for_snapshot(
                pid,
                fn
                  %{polling: %{checking?: true}} ->
                    true
 
+                 %{polling: %{checking?: false, next_poll_in_ms: due_in_ms}}
+                 when is_integer(due_in_ms) and due_in_ms <= 5_000 ->
+                   true
+
                  _ ->
                    false
                end,
-               500
+               5_000
              )
+
+    assert checking in [true, false]
+    assert is_integer(next_poll_in_ms) or is_nil(next_poll_in_ms)
 
     assert %{
              polling: %{

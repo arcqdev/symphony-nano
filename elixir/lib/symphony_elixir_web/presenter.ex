@@ -100,6 +100,8 @@ defmodule SymphonyElixirWeb.Presenter do
       issue_id: entry.issue_id,
       issue_identifier: entry.identifier,
       state: entry.state,
+      stage: Map.get(entry, :stage),
+      backend: Map.get(entry, :backend),
       worker_host: Map.get(entry, :worker_host),
       workspace_path: Map.get(entry, :workspace_path),
       session_id: entry.session_id,
@@ -132,6 +134,8 @@ defmodule SymphonyElixirWeb.Presenter do
     %{
       worker_host: Map.get(running, :worker_host),
       workspace_path: Map.get(running, :workspace_path),
+      stage: Map.get(running, :stage),
+      backend: Map.get(running, :backend),
       session_id: running.session_id,
       turn_count: Map.get(running, :turn_count, 0),
       state: running.state,
@@ -172,6 +176,8 @@ defmodule SymphonyElixirWeb.Presenter do
       %{
         at: iso8601(running.last_codex_timestamp),
         event: running.last_codex_event,
+        stage: Map.get(running, :stage),
+        backend: Map.get(running, :backend),
         message: summarize_message(running.last_codex_message)
       }
     ]

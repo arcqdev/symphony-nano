@@ -6,6 +6,7 @@ defmodule SymphonyElixir.Config.Schema do
   import Ecto.Changeset
 
   alias SymphonyElixir.PathSafety
+  alias SymphonyElixir.StageRouting
 
   @primary_key false
 
@@ -128,6 +129,8 @@ defmodule SymphonyElixir.Config.Schema do
 
     @primary_key false
     embedded_schema do
+      field(:backend, :string, default: "codex")
+      field(:stage_backends, :map, default: %{})
       field(:max_concurrent_agents, :integer, default: 10)
       field(:max_turns, :integer, default: 20)
       field(:max_retry_backoff_ms, :integer, default: 300_000)
@@ -139,9 +142,13 @@ defmodule SymphonyElixir.Config.Schema do
       schema
       |> cast(
         attrs,
-        [:max_concurrent_agents, :max_turns, :max_retry_backoff_ms, :max_concurrent_agents_by_state],
+        [:backend, :stage_backends, :max_concurrent_agents, :max_turns, :max_retry_backoff_ms, :max_concurrent_agents_by_state],
         empty_values: []
       )
+      |> update_change(:backend, &Schema.normalize_backend_name/1)
+      |> Schema.validate_backend_name(:backend)
+      |> update_change(:stage_backends, &Schema.normalize_stage_backends/1)
+      |> Schema.validate_stage_backends(:stage_backends)
       |> validate_number(:max_concurrent_agents, greater_than: 0)
       |> validate_number(:max_turns, greater_than: 0)
       |> validate_number(:max_retry_backoff_ms, greater_than: 0)
@@ -196,6 +203,31 @@ defmodule SymphonyElixir.Config.Schema do
       |> validate_number(:turn_timeout_ms, greater_than: 0)
       |> validate_number(:read_timeout_ms, greater_than: 0)
       |> validate_number(:stall_timeout_ms, greater_than_or_equal_to: 0)
+    end
+  end
+
+  defmodule Claude do
+    @moduledoc false
+    use Ecto.Schema
+    import Ecto.Changeset
+
+    @primary_key false
+    embedded_schema do
+      field(:command, :string, default: "claude")
+      field(:model, :string)
+      field(:max_turns, :integer)
+      field(:permissions_mode, :string, default: "skip")
+      field(:allowed_tools, {:array, :string}, default: [])
+      field(:turn_timeout_ms, :integer, default: 3_600_000)
+    end
+
+    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
+    def changeset(schema, attrs) do
+      schema
+      |> cast(attrs, [:command, :model, :max_turns, :permissions_mode, :allowed_tools, :turn_timeout_ms], empty_values: [])
+      |> validate_number(:turn_timeout_ms, greater_than: 0)
+      |> validate_number(:max_turns, greater_than: 0)
+      |> validate_inclusion(:permissions_mode, ["skip", "default"])
     end
   end
 
@@ -268,6 +300,7 @@ defmodule SymphonyElixir.Config.Schema do
     embeds_one(:worker, Worker, on_replace: :update, defaults_to_struct: true)
     embeds_one(:agent, Agent, on_replace: :update, defaults_to_struct: true)
     embeds_one(:codex, Codex, on_replace: :update, defaults_to_struct: true)
+    embeds_one(:claude, Claude, on_replace: :update, defaults_to_struct: true)
     embeds_one(:hooks, Hooks, on_replace: :update, defaults_to_struct: true)
     embeds_one(:observability, Observability, on_replace: :update, defaults_to_struct: true)
     embeds_one(:server, Server, on_replace: :update, defaults_to_struct: true)
@@ -333,6 +366,26 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   @doc false
+  @spec normalize_backend_name(term()) :: String.t() | nil
+  def normalize_backend_name(value), do: StageRouting.normalize_backend(value)
+
+  @doc false
+  @spec normalize_stage_backends(nil | map()) :: map()
+  def normalize_stage_backends(nil), do: %{}
+
+  def normalize_stage_backends(stage_backends) when is_map(stage_backends) do
+    Enum.reduce(stage_backends, %{}, fn {stage_name, backend_name}, acc ->
+      case StageRouting.normalize_stage(stage_name) do
+        nil ->
+          acc
+
+        normalized_stage ->
+          Map.put(acc, normalized_stage, normalize_backend_name(backend_name))
+      end
+    end)
+  end
+
+  @doc false
   @spec validate_state_limits(Ecto.Changeset.t(), atom()) :: Ecto.Changeset.t()
   def validate_state_limits(changeset, field) do
     validate_change(changeset, field, fn ^field, limits ->
@@ -351,6 +404,37 @@ defmodule SymphonyElixir.Config.Schema do
     end)
   end
 
+  @doc false
+  @spec validate_backend_name(Ecto.Changeset.t(), atom()) :: Ecto.Changeset.t()
+  def validate_backend_name(changeset, field) do
+    validate_change(changeset, field, fn ^field, backend_name ->
+      if is_binary(backend_name) and not is_nil(normalize_backend_name(backend_name)) do
+        []
+      else
+        [{field, "must be one of codex or claude-code"}]
+      end
+    end)
+  end
+
+  @doc false
+  @spec validate_stage_backends(Ecto.Changeset.t(), atom()) :: Ecto.Changeset.t()
+  def validate_stage_backends(changeset, field) do
+    validate_change(changeset, field, fn ^field, stage_backends ->
+      Enum.flat_map(stage_backends, fn {stage_name, backend_name} ->
+        cond do
+          to_string(stage_name) == "" ->
+            [{field, "stage names must not be blank"}]
+
+          not is_binary(backend_name) or is_nil(normalize_backend_name(backend_name)) ->
+            [{field, "stage backends must be one of codex or claude-code"}]
+
+          true ->
+            []
+        end
+      end)
+    end)
+  end
+
   defp changeset(attrs) do
     %__MODULE__{}
     |> cast(attrs, [])
@@ -360,6 +444,7 @@ defmodule SymphonyElixir.Config.Schema do
     |> cast_embed(:worker, with: &Worker.changeset/2)
     |> cast_embed(:agent, with: &Agent.changeset/2)
     |> cast_embed(:codex, with: &Codex.changeset/2)
+    |> cast_embed(:claude, with: &Claude.changeset/2)
     |> cast_embed(:hooks, with: &Hooks.changeset/2)
     |> cast_embed(:observability, with: &Observability.changeset/2)
     |> cast_embed(:server, with: &Server.changeset/2)
