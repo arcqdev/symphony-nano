@@ -26,10 +26,17 @@ defmodule SymphonyElixir.AgentBackend do
 
   @spec adapter(String.t() | nil) :: module()
   def adapter(backend \\ nil) do
-    case backend || Config.agent_backend() do
-      "claude" -> SymphonyElixir.AgentBackend.Claude
-      "claude-code" -> SymphonyElixir.AgentBackend.Claude
-      _ -> SymphonyElixir.AgentBackend.Codex
+    normalized_backend = backend || Config.agent_backend()
+
+    cond do
+      normalized_backend == "codex" ->
+        SymphonyElixir.AgentBackend.Codex
+
+      Config.acp_backend?(normalized_backend) ->
+        SymphonyElixir.AgentBackend.Acp
+
+      true ->
+        SymphonyElixir.AgentBackend.Codex
     end
   end
 

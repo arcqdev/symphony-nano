@@ -29,36 +29,6 @@ def load_linear_api_key_from_zshrc() -> str | None:
     return key or None
 
 
-def parse_frontmatter(path: Path) -> dict:
-    text = path.read_text(encoding="utf-8")
-    if not text.startswith("---"):
-        return {}
-    end = text.find("\n---", 3)
-    if end == -1:
-        return {}
-    fm = text[3:end]
-    data = {"server": {}, "tracker": {}}
-    section = None
-    for raw in fm.splitlines():
-        line = raw.rstrip()
-        if not line.strip() or line.strip().startswith("#"):
-            continue
-        if re.match(r"^[a-zA-Z_]+:\s*$", line):
-            section = line.split(":", 1)[0].strip()
-            continue
-        m = re.match(r"^\s{2,}([a-zA-Z_]+):\s*(.+?)\s*$", line)
-        if m and section in ("server", "tracker"):
-            key, val = m.group(1), m.group(2)
-            val = val.strip().strip('"').strip("'")
-            if key == "port":
-                try:
-                    val = int(val)
-                except ValueError:
-                    pass
-            data.setdefault(section, {})[key] = val
-    return data
-
-
 def is_port_listening(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(0.35)
@@ -81,85 +51,111 @@ def state_path(project: str) -> Path:
     return STATE_DIR / f"{project}.json"
 
 
+def print_json(payload: dict) -> None:
+    print(json.dumps(payload))
+
+
+def load_state(project: str) -> dict:
+    sp = state_path(project)
+    if not sp.exists():
+        return {}
+    return json.loads(sp.read_text(encoding="utf-8"))
+
+
+def save_state(project: str, state: dict) -> Path:
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    sp = state_path(project)
+    sp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    return sp
+
+
+def load_project_entry(project: str) -> dict | None:
+    return load_registry()["projects"].get(project)
+
+
+def build_process_env() -> dict[str, str]:
+    env = os.environ.copy()
+    if env.get("LINEAR_API_KEY"):
+        return env
+
+    zshrc_key = load_linear_api_key_from_zshrc()
+    if zshrc_key:
+        env["LINEAR_API_KEY"] = zshrc_key
+    return env
+
+
 def status(project: str) -> int:
-    reg = load_registry()["projects"].get(project)
-    if not reg:
-        print(json.dumps({"ok": False, "error": f"Unknown project: {project}"}))
+    project_entry = load_project_entry(project)
+    if project_entry is None:
+        print_json({"ok": False, "error": f"Unknown project: {project}"})
         return 1
 
-    wf = Path(reg["workflowPath"]).expanduser()
-    meta = parse_frontmatter(wf)
-    port = meta.get("server", {}).get("port")
-    slug = meta.get("tracker", {}).get("project_slug")
-
-    state = {}
-    sp = state_path(project)
-    if sp.exists():
-        state = json.loads(sp.read_text(encoding="utf-8"))
-
+    workflow_path = Path(project_entry["workflowPath"]).expanduser()
+    port = project_entry.get("port")
+    state = load_state(project)
     pid = state.get("pid")
     alive = bool(pid and pid_alive(int(pid)))
-    listening = bool(port and is_port_listening(int(port)))
+    listening = isinstance(port, int) and is_port_listening(port)
 
-    print(json.dumps({
+    print_json({
         "ok": True,
         "project": project,
-        "repoPath": reg["repoPath"],
-        "workflowPath": str(wf),
-        "projectSlug": slug,
+        "repoPath": project_entry["repoPath"],
+        "workflowPath": str(workflow_path),
+        "projectSlug": project_entry.get("projectSlug"),
         "port": port,
         "pid": pid,
         "pidAlive": alive,
         "portListening": listening,
-        "status": "running" if listening else "stopped"
-    }))
+        "status": "running" if listening else "stopped",
+    })
     return 0
 
 
 def ensure(project: str) -> int:
-    reg = load_registry()["projects"].get(project)
-    if not reg:
-        print(json.dumps({"ok": False, "error": f"Unknown project: {project}"}))
+    project_entry = load_project_entry(project)
+    if project_entry is None:
+        print_json({"ok": False, "error": f"Unknown project: {project}"})
         return 1
 
     if not BIN_PATH.exists():
-        print(json.dumps({"ok": False, "error": f"Missing binary: {BIN_PATH}"}))
+        print_json({"ok": False, "error": f"Missing binary: {BIN_PATH}"})
         return 1
 
-    wf = Path(reg["workflowPath"]).expanduser()
-    meta = parse_frontmatter(wf)
-    port = meta.get("server", {}).get("port")
-    slug = meta.get("tracker", {}).get("project_slug")
+    workflow_path = Path(project_entry["workflowPath"]).expanduser()
+    port = project_entry.get("port")
+    project_slug = project_entry.get("projectSlug")
 
     if not isinstance(port, int):
-        print(json.dumps({"ok": False, "error": "server.port missing from workflow", "workflowPath": str(wf)}))
+        print_json({
+            "ok": False,
+            "error": "port missing from registry",
+            "workflowPath": str(workflow_path),
+            "registryPath": str(REGISTRY_PATH),
+        })
         return 1
 
     if is_port_listening(port):
-        print(json.dumps({
+        print_json({
             "ok": True,
             "project": project,
             "action": "reused",
             "port": port,
-            "projectSlug": slug,
-            "workflowPath": str(wf)
-        }))
+            "projectSlug": project_slug,
+            "workflowPath": str(workflow_path),
+        })
         return 0
 
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
     log_path = STATE_DIR / f"{project}.log"
-    env = os.environ.copy()
-    if not env.get("LINEAR_API_KEY"):
-        zshrc_key = load_linear_api_key_from_zshrc()
-        if zshrc_key:
-            env["LINEAR_API_KEY"] = zshrc_key
+    env = build_process_env()
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
 
     with log_path.open("ab") as logf:
         proc = subprocess.Popen(
             [
                 str(BIN_PATH),
                 "--i-understand-that-this-will-be-running-without-the-usual-guardrails",
-                str(wf),
+                str(workflow_path),
             ],
             cwd=REPO_ROOT / "elixir",
             stdout=logf,
@@ -172,54 +168,54 @@ def ensure(project: str) -> int:
         "project": project,
         "pid": proc.pid,
         "port": port,
-        "workflowPath": str(wf),
-        "projectSlug": slug,
-        "startedAt": datetime.now().isoformat()
+        "workflowPath": str(workflow_path),
+        "projectSlug": project_slug,
+        "startedAt": datetime.now().isoformat(),
     }
-    state_path(project).write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    state_file = save_state(project, state)
 
-    print(json.dumps({
+    print_json({
         "ok": True,
         "project": project,
         "action": "started",
         "pid": proc.pid,
         "port": port,
-        "projectSlug": slug,
-        "statePath": str(state_path(project)),
-        "logPath": str(log_path)
-    }))
+        "projectSlug": project_slug,
+        "statePath": str(state_file),
+        "logPath": str(log_path),
+    })
     return 0
 
 
 def stop(project: str) -> int:
-    sp = state_path(project)
-    if not sp.exists():
-        print(json.dumps({"ok": True, "project": project, "action": "noop", "reason": "no_state"}))
+    state = load_state(project)
+    if not state:
+        print_json({"ok": True, "project": project, "action": "noop", "reason": "no_state"})
         return 0
-    state = json.loads(sp.read_text(encoding="utf-8"))
+
     pid = state.get("pid")
     if pid and pid_alive(int(pid)):
         os.kill(int(pid), signal.SIGTERM)
-    print(json.dumps({"ok": True, "project": project, "action": "stopped", "pid": pid}))
+
+    print_json({"ok": True, "project": project, "action": "stopped", "pid": pid})
     return 0
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(description="Deterministic Symphony launcher")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
-    for cmd in ("status", "ensure", "stop"):
+    commands = {"status": status, "ensure": ensure, "stop": stop}
+    for cmd, handler in commands.items():
         p = sub.add_parser(cmd)
         p.add_argument("project")
+        p.set_defaults(handler=handler)
+    return ap
 
-    args = ap.parse_args()
-    if args.cmd == "status":
-        return status(args.project)
-    if args.cmd == "ensure":
-        return ensure(args.project)
-    if args.cmd == "stop":
-        return stop(args.project)
-    return 1
+
+def main() -> int:
+    args = build_parser().parse_args()
+    return args.handler(args.project)
 
 
 if __name__ == "__main__":

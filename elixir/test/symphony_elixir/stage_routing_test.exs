@@ -126,6 +126,22 @@ defmodule SymphonyElixir.StageRoutingTest do
     assert message =~ "agent.stage_backends"
   end
 
+  test "config accepts configured ACP backends in stage routing" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      agent_backend: "review-bot",
+      agent_stage_backends: %{"frontend" => "review-bot"},
+      acp_backends: %{
+        "claude-code" => %{"command" => "claude-agent-acp"},
+        "review-bot" => %{"command" => "custom-review-acp"}
+      }
+    )
+
+    assert Config.validate!() == :ok
+    assert Config.agent_backend() == "review-bot"
+    assert Config.backend_for_stage("frontend") == "review-bot"
+    assert Config.settings!().acp.backends["review-bot"]["command"] == "custom-review-acp"
+  end
+
   test "agent runner routes labeled stages through configured backends and emits backend metadata" do
     workspace_root =
       Path.join(

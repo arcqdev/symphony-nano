@@ -105,17 +105,26 @@ defmodule SymphonyElixir.TestSupport do
           worker_max_concurrent_agents_per_host: nil,
           agent_backend: "codex",
           agent_stage_backends: %{},
+          agent_stage_models: %{},
+          agent_stage_reasoning_efforts: %{},
           max_concurrent_agents: 10,
           max_turns: 20,
           max_retry_backoff_ms: 300_000,
           max_concurrent_agents_by_state: %{},
           codex_command: "codex app-server",
+          codex_model: nil,
+          codex_reasoning_effort: nil,
           codex_approval_policy: %{reject: %{sandbox_approval: true, rules: true, mcp_elicitations: true}},
           codex_thread_sandbox: "workspace-write",
           codex_turn_sandbox_policy: nil,
           codex_turn_timeout_ms: 3_600_000,
           codex_read_timeout_ms: 5_000,
           codex_stall_timeout_ms: 300_000,
+          acp_turn_timeout_ms: 3_600_000,
+          acp_read_timeout_ms: 5_000,
+          acp_stall_timeout_ms: 300_000,
+          acp_bypass_permissions: true,
+          acp_backends: %{"claude-code" => %{"command" => "claude-agent-acp", "env" => %{}}},
           hook_after_create: nil,
           hook_before_run: nil,
           hook_after_run: nil,
@@ -144,17 +153,26 @@ defmodule SymphonyElixir.TestSupport do
     worker_max_concurrent_agents_per_host = Keyword.get(config, :worker_max_concurrent_agents_per_host)
     agent_backend = Keyword.get(config, :agent_backend)
     agent_stage_backends = Keyword.get(config, :agent_stage_backends)
+    agent_stage_models = Keyword.get(config, :agent_stage_models)
+    agent_stage_reasoning_efforts = Keyword.get(config, :agent_stage_reasoning_efforts)
     max_concurrent_agents = Keyword.get(config, :max_concurrent_agents)
     max_turns = Keyword.get(config, :max_turns)
     max_retry_backoff_ms = Keyword.get(config, :max_retry_backoff_ms)
     max_concurrent_agents_by_state = Keyword.get(config, :max_concurrent_agents_by_state)
     codex_command = Keyword.get(config, :codex_command)
+    codex_model = Keyword.get(config, :codex_model)
+    codex_reasoning_effort = Keyword.get(config, :codex_reasoning_effort)
     codex_approval_policy = Keyword.get(config, :codex_approval_policy)
     codex_thread_sandbox = Keyword.get(config, :codex_thread_sandbox)
     codex_turn_sandbox_policy = Keyword.get(config, :codex_turn_sandbox_policy)
     codex_turn_timeout_ms = Keyword.get(config, :codex_turn_timeout_ms)
     codex_read_timeout_ms = Keyword.get(config, :codex_read_timeout_ms)
     codex_stall_timeout_ms = Keyword.get(config, :codex_stall_timeout_ms)
+    acp_turn_timeout_ms = Keyword.get(config, :acp_turn_timeout_ms)
+    acp_read_timeout_ms = Keyword.get(config, :acp_read_timeout_ms)
+    acp_stall_timeout_ms = Keyword.get(config, :acp_stall_timeout_ms)
+    acp_bypass_permissions = Keyword.get(config, :acp_bypass_permissions)
+    acp_backends = Keyword.get(config, :acp_backends)
     hook_after_create = Keyword.get(config, :hook_after_create)
     hook_before_run = Keyword.get(config, :hook_before_run)
     hook_after_run = Keyword.get(config, :hook_after_run)
@@ -186,18 +204,28 @@ defmodule SymphonyElixir.TestSupport do
         "agent:",
         "  backend: #{yaml_value(agent_backend)}",
         "  stage_backends: #{yaml_value(agent_stage_backends)}",
+        "  stage_models: #{yaml_value(agent_stage_models)}",
+        "  stage_reasoning_efforts: #{yaml_value(agent_stage_reasoning_efforts)}",
         "  max_concurrent_agents: #{yaml_value(max_concurrent_agents)}",
         "  max_turns: #{yaml_value(max_turns)}",
         "  max_retry_backoff_ms: #{yaml_value(max_retry_backoff_ms)}",
         "  max_concurrent_agents_by_state: #{yaml_value(max_concurrent_agents_by_state)}",
         "codex:",
         "  command: #{yaml_value(codex_command)}",
+        "  model: #{yaml_value(codex_model)}",
+        "  reasoning_effort: #{yaml_value(codex_reasoning_effort)}",
         "  approval_policy: #{yaml_value(codex_approval_policy)}",
         "  thread_sandbox: #{yaml_value(codex_thread_sandbox)}",
         "  turn_sandbox_policy: #{yaml_value(codex_turn_sandbox_policy)}",
         "  turn_timeout_ms: #{yaml_value(codex_turn_timeout_ms)}",
         "  read_timeout_ms: #{yaml_value(codex_read_timeout_ms)}",
         "  stall_timeout_ms: #{yaml_value(codex_stall_timeout_ms)}",
+        "acp:",
+        "  turn_timeout_ms: #{yaml_value(acp_turn_timeout_ms)}",
+        "  read_timeout_ms: #{yaml_value(acp_read_timeout_ms)}",
+        "  stall_timeout_ms: #{yaml_value(acp_stall_timeout_ms)}",
+        "  bypass_permissions: #{yaml_value(acp_bypass_permissions)}",
+        "  backends: #{yaml_value(acp_backends)}",
         hooks_yaml(hook_after_create, hook_before_run, hook_after_run, hook_before_remove, hook_timeout_ms),
         observability_yaml(observability_enabled, observability_refresh_ms, observability_render_interval_ms),
         server_yaml(server_port, server_host),

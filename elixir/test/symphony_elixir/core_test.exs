@@ -64,6 +64,41 @@ defmodule SymphonyElixir.CoreTest do
     write_workflow_file!(Workflow.workflow_file_path(), codex_command: "/bin/sh app-server")
     assert :ok = Config.validate!()
 
+    write_workflow_file!(Workflow.workflow_file_path(), codex_model: "gpt-5.3-codex")
+    assert :ok = Config.validate!()
+    assert Config.settings!().codex.model == "gpt-5.3-codex"
+
+    write_workflow_file!(Workflow.workflow_file_path(), codex_reasoning_effort: "high")
+    assert :ok = Config.validate!()
+    assert Config.settings!().codex.reasoning_effort == "high"
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      agent_stage_models: %{"frontend" => "gpt-5-codex-mini"},
+      agent_stage_reasoning_efforts: %{"frontend" => "medium"}
+    )
+
+    assert :ok = Config.validate!()
+    assert Config.settings!().agent.stage_models == %{"frontend" => "gpt-5-codex-mini"}
+    assert Config.settings!().agent.stage_reasoning_efforts == %{"frontend" => "medium"}
+    assert Config.codex_model("frontend") == "gpt-5-codex-mini"
+    assert Config.codex_reasoning_effort("frontend") == "medium"
+
+    write_workflow_file!(Workflow.workflow_file_path(), codex_model: 123)
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "codex.model"
+
+    write_workflow_file!(Workflow.workflow_file_path(), codex_reasoning_effort: 123)
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "codex.reasoning_effort"
+
+    write_workflow_file!(Workflow.workflow_file_path(), agent_stage_models: %{"frontend" => 123})
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "agent.stage_models"
+
+    write_workflow_file!(Workflow.workflow_file_path(), agent_stage_reasoning_efforts: %{"frontend" => 123})
+    assert {:error, {:invalid_workflow_config, message}} = Config.validate!()
+    assert message =~ "agent.stage_reasoning_efforts"
+
     write_workflow_file!(Workflow.workflow_file_path(), codex_approval_policy: "definitely-not-valid")
     assert :ok = Config.validate!()
 
@@ -105,8 +140,9 @@ defmodule SymphonyElixir.CoreTest do
 
     hooks = Map.get(config, "hooks", %{})
     assert is_map(hooks)
-    assert Map.get(hooks, "after_create") =~ "./hooks/create-worktree.sh"
-    assert Map.get(hooks, "before_run") =~ "./hooks/sync-worktree.sh"
+    assert Map.get(hooks, "after_create") =~ "git clone --depth 1 https://github.com/openai/symphony ."
+    assert Map.get(hooks, "after_create") =~ "cd elixir && mise trust"
+    assert Map.get(hooks, "after_create") =~ "mise exec -- mix deps.get"
     assert Map.get(hooks, "before_remove") =~ "cd elixir && mise exec -- mix workspace.before_remove"
 
     assert String.trim(prompt) != ""
@@ -1620,6 +1656,27 @@ defmodule SymphonyElixir.CoreTest do
     after
       File.rm_rf(test_root)
     end
+  end
+
+  test "app server startup args append codex model and reasoning effort from first-class config" do
+    assert AppServer.codex_launch_command("codex app-server", "gpt-5.3-codex") ==
+             "codex --model 'gpt-5.3-codex' app-server"
+
+    assert AppServer.codex_launch_command("/tmp/fake-codex app-server", "gpt-5.3-codex") ==
+             "/tmp/fake-codex --model 'gpt-5.3-codex' app-server"
+
+    assert AppServer.codex_launch_command("codex app-server", "gpt-5.3-codex", "high") ==
+             "codex --model 'gpt-5.3-codex' --config model_reasoning_effort='high' app-server"
+
+    assert AppServer.codex_launch_command("codex app-server", nil, "medium") ==
+             "codex --config model_reasoning_effort='medium' app-server"
+
+    assert AppServer.codex_launch_command(
+             "codex --config model_reasoning_effort=high app-server",
+             "gpt-5.3-codex",
+             "medium"
+           ) ==
+             "codex --config model_reasoning_effort=high --model 'gpt-5.3-codex' app-server"
   end
 
   test "app server startup payload uses configurable approval and sandbox settings from workflow config" do

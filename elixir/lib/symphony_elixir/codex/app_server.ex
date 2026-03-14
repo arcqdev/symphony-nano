@@ -39,9 +39,10 @@ defmodule SymphonyElixir.Codex.AppServer do
   @spec start_session(Path.t(), keyword()) :: {:ok, session()} | {:error, term()}
   def start_session(workspace, opts \\ []) do
     worker_host = Keyword.get(opts, :worker_host)
+    stage = Keyword.get(opts, :stage)
 
     with {:ok, expanded_workspace} <- validate_workspace_cwd(workspace, worker_host),
-         {:ok, port} <- start_port(expanded_workspace, worker_host) do
+         {:ok, port} <- start_port(expanded_workspace, worker_host, stage) do
       metadata = port_metadata(port, worker_host)
 
       with {:ok, session_policies} <- session_policies(expanded_workspace, worker_host),
@@ -186,7 +187,7 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp start_port(workspace, nil) do
+  defp start_port(workspace, nil, stage) do
     executable = System.find_executable("bash")
 
     if is_nil(executable) do
@@ -199,7 +200,7 @@ defmodule SymphonyElixir.Codex.AppServer do
             :binary,
             :exit_status,
             :stderr_to_stdout,
-            args: [~c"-lc", String.to_charlist(Config.settings!().codex.command)],
+            args: [~c"-lc", String.to_charlist(codex_launch_command(stage))],
             cd: String.to_charlist(workspace),
             line: @port_line_bytes
           ]
@@ -209,17 +210,30 @@ defmodule SymphonyElixir.Codex.AppServer do
     end
   end
 
-  defp start_port(workspace, worker_host) when is_binary(worker_host) do
-    remote_command = remote_launch_command(workspace)
+  defp start_port(workspace, worker_host, stage) when is_binary(worker_host) do
+    remote_command = remote_launch_command(workspace, stage)
     SSH.start_port(worker_host, remote_command, line: @port_line_bytes)
   end
 
-  defp remote_launch_command(workspace) when is_binary(workspace) do
+  defp remote_launch_command(workspace, stage) when is_binary(workspace) do
     [
       "cd #{shell_escape(workspace)}",
-      "exec #{Config.settings!().codex.command}"
+      "exec #{codex_launch_command(stage)}"
     ]
     |> Enum.join(" && ")
+  end
+
+  @doc false
+  @spec codex_launch_command(String.t(), String.t() | nil, String.t() | nil) :: String.t()
+  def codex_launch_command(command, model, reasoning_effort \\ nil) when is_binary(command) do
+    command
+    |> maybe_add_codex_model(normalize_optional_string(model))
+    |> maybe_add_reasoning_effort(normalize_optional_string(reasoning_effort))
+  end
+
+  defp codex_launch_command(stage) do
+    codex = Config.settings!().codex
+    codex_launch_command(codex.command, Config.codex_model(stage), Config.codex_reasoning_effort(stage))
   end
 
   defp port_metadata(port, worker_host) when is_port(port) do
@@ -1017,6 +1031,46 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp maybe_set_usage(metadata, _payload), do: metadata
+
+  defp maybe_add_codex_model(command, nil), do: command
+
+  defp maybe_add_codex_model(command, model) do
+    if Regex.match?(~r/(^|\s)--model(?:\s|=)/, command) do
+      command
+    else
+      insert_before_app_server_or_append(command, "--model " <> shell_escape(model))
+    end
+  end
+
+  defp maybe_add_reasoning_effort(command, nil), do: command
+
+  defp maybe_add_reasoning_effort(command, reasoning_effort) do
+    if Regex.match?(~r/(^|\s)--config(?:\s+|=)model_reasoning_effort=/, command) do
+      command
+    else
+      insert_before_app_server_or_append(
+        command,
+        "--config model_reasoning_effort=" <> shell_escape(reasoning_effort)
+      )
+    end
+  end
+
+  defp insert_before_app_server_or_append(command, fragment) do
+    if Regex.match?(~r/\bapp-server\b/, command) do
+      String.replace(command, ~r/\bapp-server\b/, fragment <> " app-server", global: false)
+    else
+      command <> " " <> fragment
+    end
+  end
+
+  defp normalize_optional_string(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_optional_string(_value), do: nil
 
   defp shell_escape(value) when is_binary(value) do
     "'" <> String.replace(value, "'", "'\"'\"'") <> "'"

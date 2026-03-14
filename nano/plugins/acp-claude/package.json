@@ -1,0 +1,12 @@
+{
+  "name": "@symphony-nano/acp-claude",
+  "private": true,
+  "version": "0.0.1",
+  "type": "module",
+  "bin": {
+    "acp-claude": "./bin/acp-claude.mjs"
+  },
+  "dependencies": {
+    "@zed-industries/claude-agent-acp": "0.21.0"
+  }
+}

@@ -429,6 +429,10 @@ fields locally if they want stricter startup checks.
   - Default: `codex app-server`
   - The runtime launches this command via `bash -lc` in the workspace directory.
   - The launched process must speak a compatible app-server protocol over stdio.
+- `model` (string)
+  - Default: unset.
+  - When set, the runtime appends `--model <value>` to the launched command unless `command`
+    already includes a `--model` argument.
 - `approval_policy` (Codex `AskForApproval` value)
   - Default: implementation-defined.
 - `thread_sandbox` (Codex `SandboxMode` value)
@@ -569,10 +573,16 @@ This section is intentionally redundant so a coding agent can implement the conf
 - `hooks.before_remove`: shell script or null
 - `hooks.timeout_ms`: integer, default `60000`
 - `agent.max_concurrent_agents`: integer, default `10`
+- `agent.stage_models` (extension): map `stage -> model string`, default `{}`
+- `agent.stage_reasoning_efforts` (extension): map `stage -> reasoning effort string`, default `{}`
 - `agent.max_turns`: integer, default `20`
 - `agent.max_retry_backoff_ms`: integer, default `300000` (5m)
 - `agent.max_concurrent_agents_by_state`: map of positive integers, default `{}`
 - `codex.command`: shell command string, default `codex app-server`
+- `codex.model`: string, optional; appends `--model <value>` unless `codex.command` already
+  specifies a model
+- `codex.reasoning_effort` (extension): string, optional; appends
+  `--config model_reasoning_effort=<value>` unless `codex.command` already specifies it
 - `codex.approval_policy`: Codex `AskForApproval` value, default implementation-defined
 - `codex.thread_sandbox`: Codex `SandboxMode` value, default implementation-defined
 - `codex.turn_sandbox_policy`: Codex `SandboxPolicy` value, default implementation-defined

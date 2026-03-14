@@ -15,13 +15,15 @@ This directory contains the current Elixir/OTP implementation of Symphony, based
 
 1. Polls Linear for candidate work
 2. Creates a workspace per issue
-3. Launches Codex in [App Server mode](https://developers.openai.com/codex/app-server/) inside the
-   workspace
-4. Sends a workflow prompt to Codex
-5. Keeps Codex working on the issue until the work is done
+3. Launches the configured coding backend inside the workspace
+4. Sends a workflow prompt to that backend
+5. Keeps the backend working on the issue until the work is done
 
-During app-server sessions, Symphony also serves a client-side `linear_graphql` tool so that repo
-skills can make raw Linear GraphQL calls.
+Codex runs in [App Server mode](https://developers.openai.com/codex/app-server/). ACP-backed
+agents such as Claude Code are launched over stdio via a generic ACP adapter.
+
+During Codex app-server sessions, Symphony also serves a client-side `linear_graphql` tool so that
+repo skills can make raw Linear GraphQL calls.
 
 If a claimed issue moves to a terminal state (`Done`, `Closed`, `Cancelled`, or `Duplicate`),
 Symphony stops the active agent for that issue and cleans up matching workspaces.
@@ -100,6 +102,12 @@ agent:
   max_turns: 20
 codex:
   command: codex app-server
+  model: gpt-5.3-codex
+  reasoning_effort: high
+acp:
+  backends:
+    claude-code:
+      command: claude-agent-acp
 ---
 
 You are working on a Linear issue {{ issue.identifier }}.
@@ -110,10 +118,30 @@ Title: {{ issue.title }} Body: {{ issue.description }}
 Notes:
 
 - If a value is missing, defaults are used.
+- `agent.backend` defaults to `codex`. Built-in Codex routing remains separate from ACP routing.
+- Any non-`codex` backend name used in `agent.backend` or `agent.stage_backends` must be declared
+  under `acp.backends`.
+- `agent.stage_models` optionally overrides the model per routed stage such as `backend`,
+  `frontend`, or `integration`.
+- `agent.stage_reasoning_efforts` optionally overrides Codex reasoning effort per routed stage.
+- Symphony ships with a default ACP backend entry for `claude-code` using
+  `claude-agent-acp`.
 - Safer Codex defaults are used when policy fields are omitted:
   - `codex.approval_policy` defaults to `{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}`
   - `codex.thread_sandbox` defaults to `workspace-write`
   - `codex.turn_sandbox_policy` defaults to a `workspaceWrite` policy rooted at the current issue workspace
+- ACP defaults are used when fields are omitted:
+  - `acp.turn_timeout_ms` defaults to `3600000`
+  - `acp.read_timeout_ms` defaults to `5000`
+  - `acp.stall_timeout_ms` defaults to `300000`
+  - `acp.bypass_permissions` defaults to `true`
+- Each `acp.backends.<name>` entry accepts:
+  - `command`: shell command string used to launch the ACP server
+  - `env`: string map of extra environment variables
+  - `model`: optional ACP model preference applied after `session/new`
+  - `turn_timeout_ms`, `read_timeout_ms`, `stall_timeout_ms`: optional per-backend overrides
+  - `bypass_permissions`: optional per-backend override for auto-selecting ACP permission prompts
+  - `mode`: optional ACP session mode id to apply after `session/new`
 - Supported `codex.approval_policy` values depend on the targeted Codex app-server version. In the current local Codex schema, string values include `untrusted`, `on-failure`, `on-request`, and `never`, and object-form `reject` is also supported.
 - Supported `codex.thread_sandbox` values: `read-only`, `workspace-write`, `danger-full-access`.
 - When `codex.turn_sandbox_policy` is set explicitly, Symphony passes the map through to Codex
@@ -142,7 +170,14 @@ hooks:
   after_create: |
     git clone --depth 1 "$SOURCE_REPO_URL" .
 codex:
-  command: "$CODEX_BIN app-server --model gpt-5.3-codex"
+  command: "$CODEX_BIN app-server"
+  model: gpt-5.3-codex
+acp:
+  backends:
+    claude-code:
+      command: "$CLAUDE_ACP_BIN"
+      env:
+        ANTHROPIC_CONFIG_DIR: $ANTHROPIC_CONFIG_DIR
 ```
 
 - If `WORKFLOW.md` is missing or has invalid YAML at startup, Symphony does not boot.

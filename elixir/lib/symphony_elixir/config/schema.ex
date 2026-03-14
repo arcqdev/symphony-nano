@@ -12,6 +12,15 @@ defmodule SymphonyElixir.Config.Schema do
 
   @type t :: %__MODULE__{}
 
+  @default_acp_backends %{
+    "claude-code" => %{
+      "command" => "claude-agent-acp",
+      "env" => %{}
+    }
+  }
+
+  @builtin_backend_names ["codex"]
+
   defmodule StringOrMap do
     @moduledoc false
     @behaviour Ecto.Type
@@ -131,24 +140,42 @@ defmodule SymphonyElixir.Config.Schema do
     embedded_schema do
       field(:backend, :string, default: "codex")
       field(:stage_backends, :map, default: %{})
+      field(:stage_models, :map, default: %{})
+      field(:stage_reasoning_efforts, :map, default: %{})
       field(:max_concurrent_agents, :integer, default: 10)
       field(:max_turns, :integer, default: 20)
       field(:max_retry_backoff_ms, :integer, default: 300_000)
       field(:max_concurrent_agents_by_state, :map, default: %{})
     end
 
-    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
-    def changeset(schema, attrs) do
+    @spec changeset(%__MODULE__{}, map(), [String.t()]) :: Ecto.Changeset.t()
+    def changeset(schema, attrs, allowed_backends) do
       schema
       |> cast(
         attrs,
-        [:backend, :stage_backends, :max_concurrent_agents, :max_turns, :max_retry_backoff_ms, :max_concurrent_agents_by_state],
+        [
+          :backend,
+          :stage_backends,
+          :stage_models,
+          :stage_reasoning_efforts,
+          :max_concurrent_agents,
+          :max_turns,
+          :max_retry_backoff_ms,
+          :max_concurrent_agents_by_state
+        ],
         empty_values: []
       )
       |> update_change(:backend, &Schema.normalize_backend_name/1)
-      |> Schema.validate_backend_name(:backend)
+      |> Schema.validate_backend_name(:backend, allowed_backends)
       |> update_change(:stage_backends, &Schema.normalize_stage_backends/1)
-      |> Schema.validate_stage_backends(:stage_backends)
+      |> Schema.validate_stage_backends(:stage_backends, allowed_backends)
+      |> update_change(:stage_models, &Schema.normalize_stage_string_map/1)
+      |> Schema.validate_stage_string_map(:stage_models, "stage models must be non-empty strings")
+      |> update_change(:stage_reasoning_efforts, &Schema.normalize_stage_string_map/1)
+      |> Schema.validate_stage_string_map(
+        :stage_reasoning_efforts,
+        "stage reasoning efforts must be non-empty strings"
+      )
       |> validate_number(:max_concurrent_agents, greater_than: 0)
       |> validate_number(:max_turns, greater_than: 0)
       |> validate_number(:max_retry_backoff_ms, greater_than: 0)
@@ -165,6 +192,8 @@ defmodule SymphonyElixir.Config.Schema do
     @primary_key false
     embedded_schema do
       field(:command, :string, default: "codex app-server")
+      field(:model, :string)
+      field(:reasoning_effort, :string)
 
       field(:approval_policy, StringOrMap,
         default: %{
@@ -190,6 +219,8 @@ defmodule SymphonyElixir.Config.Schema do
         attrs,
         [
           :command,
+          :model,
+          :reasoning_effort,
           :approval_policy,
           :thread_sandbox,
           :turn_sandbox_policy,
@@ -206,28 +237,31 @@ defmodule SymphonyElixir.Config.Schema do
     end
   end
 
-  defmodule Claude do
+  defmodule Acp do
     @moduledoc false
     use Ecto.Schema
     import Ecto.Changeset
 
+    alias SymphonyElixir.Config.Schema
+
     @primary_key false
     embedded_schema do
-      field(:command, :string, default: "claude")
-      field(:model, :string)
-      field(:max_turns, :integer)
-      field(:permissions_mode, :string, default: "skip")
-      field(:allowed_tools, {:array, :string}, default: [])
+      field(:backends, :map, default: %{"claude-code" => %{"command" => "claude-agent-acp", "env" => %{}}})
+      field(:bypass_permissions, :boolean, default: true)
+      field(:read_timeout_ms, :integer, default: 5_000)
+      field(:stall_timeout_ms, :integer, default: 300_000)
       field(:turn_timeout_ms, :integer, default: 3_600_000)
     end
 
     @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
     def changeset(schema, attrs) do
       schema
-      |> cast(attrs, [:command, :model, :max_turns, :permissions_mode, :allowed_tools, :turn_timeout_ms], empty_values: [])
+      |> cast(attrs, [:backends, :bypass_permissions, :read_timeout_ms, :stall_timeout_ms, :turn_timeout_ms], empty_values: [])
+      |> update_change(:backends, &Schema.normalize_acp_backends/1)
+      |> Schema.validate_acp_backends(:backends)
+      |> validate_number(:read_timeout_ms, greater_than: 0)
+      |> validate_number(:stall_timeout_ms, greater_than_or_equal_to: 0)
       |> validate_number(:turn_timeout_ms, greater_than: 0)
-      |> validate_number(:max_turns, greater_than: 0)
-      |> validate_inclusion(:permissions_mode, ["skip", "default"])
     end
   end
 
@@ -300,7 +334,7 @@ defmodule SymphonyElixir.Config.Schema do
     embeds_one(:worker, Worker, on_replace: :update, defaults_to_struct: true)
     embeds_one(:agent, Agent, on_replace: :update, defaults_to_struct: true)
     embeds_one(:codex, Codex, on_replace: :update, defaults_to_struct: true)
-    embeds_one(:claude, Claude, on_replace: :update, defaults_to_struct: true)
+    embeds_one(:acp, Acp, on_replace: :update, defaults_to_struct: true)
     embeds_one(:hooks, Hooks, on_replace: :update, defaults_to_struct: true)
     embeds_one(:observability, Observability, on_replace: :update, defaults_to_struct: true)
     embeds_one(:server, Server, on_replace: :update, defaults_to_struct: true)
@@ -370,6 +404,27 @@ defmodule SymphonyElixir.Config.Schema do
   def normalize_backend_name(value), do: StageRouting.normalize_backend(value)
 
   @doc false
+  @spec normalize_acp_backends(nil | map()) :: map()
+  def normalize_acp_backends(nil), do: @default_acp_backends
+
+  def normalize_acp_backends(backends) when is_map(backends) do
+    normalized_backends =
+      Enum.reduce(backends, %{}, fn {backend_name, backend_config}, acc ->
+        case normalize_backend_name(backend_name) do
+          nil ->
+            acc
+
+          normalized_backend ->
+            Map.put(acc, normalized_backend, normalize_acp_backend_config(backend_config))
+        end
+      end)
+
+    Map.merge(@default_acp_backends, normalized_backends, fn _backend_name, defaults, configured ->
+      Map.merge(defaults, configured)
+    end)
+  end
+
+  @doc false
   @spec normalize_stage_backends(nil | map()) :: map()
   def normalize_stage_backends(nil), do: %{}
 
@@ -381,6 +436,22 @@ defmodule SymphonyElixir.Config.Schema do
 
         normalized_stage ->
           Map.put(acc, normalized_stage, normalize_backend_name(backend_name))
+      end
+    end)
+  end
+
+  @doc false
+  @spec normalize_stage_string_map(nil | map()) :: map()
+  def normalize_stage_string_map(nil), do: %{}
+
+  def normalize_stage_string_map(stage_values) when is_map(stage_values) do
+    Enum.reduce(stage_values, %{}, fn {stage_name, value}, acc ->
+      case {StageRouting.normalize_stage(stage_name), normalize_stage_string_value(value)} do
+        {nil, _value} ->
+          acc
+
+        {normalized_stage, normalized_value} ->
+          Map.put(acc, normalized_stage, normalized_value)
       end
     end)
   end
@@ -405,28 +476,47 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   @doc false
-  @spec validate_backend_name(Ecto.Changeset.t(), atom()) :: Ecto.Changeset.t()
-  def validate_backend_name(changeset, field) do
+  @spec validate_backend_name(Ecto.Changeset.t(), atom(), [String.t()]) :: Ecto.Changeset.t()
+  def validate_backend_name(changeset, field, allowed_backends) do
     validate_change(changeset, field, fn ^field, backend_name ->
-      if is_binary(backend_name) and not is_nil(normalize_backend_name(backend_name)) do
+      if is_binary(backend_name) and backend_name in allowed_backends do
         []
       else
-        [{field, "must be one of codex or claude-code"}]
+        [{field, "must be one of #{backend_error_choices(allowed_backends)}"}]
       end
     end)
   end
 
   @doc false
-  @spec validate_stage_backends(Ecto.Changeset.t(), atom()) :: Ecto.Changeset.t()
-  def validate_stage_backends(changeset, field) do
+  @spec validate_stage_backends(Ecto.Changeset.t(), atom(), [String.t()]) :: Ecto.Changeset.t()
+  def validate_stage_backends(changeset, field, allowed_backends) do
     validate_change(changeset, field, fn ^field, stage_backends ->
       Enum.flat_map(stage_backends, fn {stage_name, backend_name} ->
         cond do
           to_string(stage_name) == "" ->
             [{field, "stage names must not be blank"}]
 
-          not is_binary(backend_name) or is_nil(normalize_backend_name(backend_name)) ->
-            [{field, "stage backends must be one of codex or claude-code"}]
+          not is_binary(backend_name) or backend_name not in allowed_backends ->
+            [{field, "stage backends must be one of #{backend_error_choices(allowed_backends)}"}]
+
+          true ->
+            []
+        end
+      end)
+    end)
+  end
+
+  @doc false
+  @spec validate_stage_string_map(Ecto.Changeset.t(), atom(), String.t()) :: Ecto.Changeset.t()
+  def validate_stage_string_map(changeset, field, value_error_message) do
+    validate_change(changeset, field, fn ^field, stage_values ->
+      Enum.flat_map(stage_values, fn {stage_name, value} ->
+        cond do
+          to_string(stage_name) == "" ->
+            [{field, "stage names must not be blank"}]
+
+          not is_binary(value) or String.trim(value) == "" ->
+            [{field, value_error_message}]
 
           true ->
             []
@@ -436,15 +526,17 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   defp changeset(attrs) do
+    allowed_backends = allowed_backend_names(attrs)
+
     %__MODULE__{}
     |> cast(attrs, [])
     |> cast_embed(:tracker, with: &Tracker.changeset/2)
     |> cast_embed(:polling, with: &Polling.changeset/2)
     |> cast_embed(:workspace, with: &Workspace.changeset/2)
     |> cast_embed(:worker, with: &Worker.changeset/2)
-    |> cast_embed(:agent, with: &Agent.changeset/2)
+    |> cast_embed(:agent, with: &Agent.changeset(&1, &2, allowed_backends))
     |> cast_embed(:codex, with: &Codex.changeset/2)
-    |> cast_embed(:claude, with: &Claude.changeset/2)
+    |> cast_embed(:acp, with: &Acp.changeset/2)
     |> cast_embed(:hooks, with: &Hooks.changeset/2)
     |> cast_embed(:observability, with: &Observability.changeset/2)
     |> cast_embed(:server, with: &Server.changeset/2)
@@ -468,7 +560,12 @@ defmodule SymphonyElixir.Config.Schema do
         turn_sandbox_policy: normalize_optional_map(settings.codex.turn_sandbox_policy)
     }
 
-    %{settings | tracker: tracker, workspace: workspace, codex: codex}
+    acp = %{
+      settings.acp
+      | backends: finalize_acp_backends(settings.acp.backends)
+    }
+
+    %{settings | tracker: tracker, workspace: workspace, codex: codex, acp: acp}
   end
 
   defp normalize_keys(value) when is_map(value) do
@@ -482,6 +579,168 @@ defmodule SymphonyElixir.Config.Schema do
 
   defp normalize_optional_map(nil), do: nil
   defp normalize_optional_map(value) when is_map(value), do: normalize_keys(value)
+
+  defp allowed_backend_names(attrs) do
+    acp_backend_names =
+      attrs
+      |> Map.get("acp", %{})
+      |> Map.get("backends", %{})
+      |> case do
+        backends when is_map(backends) ->
+          backends
+          |> Map.keys()
+          |> Enum.map(&normalize_backend_name/1)
+          |> Enum.reject(&is_nil/1)
+
+        _ ->
+          []
+      end
+
+    (@builtin_backend_names ++ Map.keys(@default_acp_backends) ++ acp_backend_names)
+    |> Enum.uniq()
+  end
+
+  defp normalize_acp_backend_config(command) when is_binary(command) do
+    %{"command" => command, "env" => %{}}
+  end
+
+  defp normalize_acp_backend_config(config) when is_map(config) do
+    config
+    |> normalize_keys()
+    |> Map.update("env", %{}, fn
+      env when is_map(env) -> normalize_keys(env)
+      _ -> %{}
+    end)
+  end
+
+  defp normalize_acp_backend_config(_config), do: %{}
+
+  defp finalize_acp_backends(nil), do: normalize_acp_backends(nil)
+
+  defp finalize_acp_backends(backends) when is_map(backends) do
+    backends
+    |> normalize_acp_backends()
+    |> Enum.into(%{}, fn {backend_name, backend_config} ->
+      {backend_name, finalize_acp_backend_config(backend_config)}
+    end)
+  end
+
+  defp finalize_acp_backend_config(config) when is_map(config) do
+    config
+    |> normalize_keys()
+    |> Map.update("env", %{}, &finalize_acp_backend_env/1)
+  end
+
+  defp finalize_acp_backend_env(env) when is_map(env) do
+    Enum.into(env, %{}, fn {key, value} ->
+      normalized_value =
+        case resolve_env_value(to_string(value), to_string(value)) do
+          nil -> ""
+          resolved -> to_string(resolved)
+        end
+
+      {to_string(key), normalized_value}
+    end)
+  end
+
+  defp finalize_acp_backend_env(_env), do: %{}
+
+  @doc false
+  @spec validate_acp_backends(Ecto.Changeset.t(), atom()) :: Ecto.Changeset.t()
+  def validate_acp_backends(changeset, field) do
+    validate_change(changeset, field, fn ^field, backends ->
+      Enum.flat_map(backends, fn {backend_name, backend_config} ->
+        validate_acp_backend_config(field, backend_name, backend_config)
+      end)
+    end)
+  end
+
+  defp validate_acp_backend_config(field, backend_name, backend_config) when is_map(backend_config) do
+    command = Map.get(backend_config, "command")
+    env = Map.get(backend_config, "env", %{})
+
+    []
+    |> maybe_add_acp_backend_error(blank_backend_name?(backend_name), field, "ACP backend names must not be blank")
+    |> maybe_add_acp_backend_error(not non_empty_binary?(command), field, "ACP backend command must be a non-empty string")
+    |> maybe_add_acp_backend_error(not valid_env_map?(env), field, "ACP backend env must be a string map")
+    |> maybe_add_acp_backend_error(
+      invalid_positive_integer?(Map.get(backend_config, "turn_timeout_ms")),
+      field,
+      "ACP backend turn_timeout_ms must be a positive integer"
+    )
+    |> maybe_add_acp_backend_error(
+      invalid_positive_integer?(Map.get(backend_config, "read_timeout_ms")),
+      field,
+      "ACP backend read_timeout_ms must be a positive integer"
+    )
+    |> maybe_add_acp_backend_error(
+      invalid_non_negative_integer?(Map.get(backend_config, "stall_timeout_ms")),
+      field,
+      "ACP backend stall_timeout_ms must be a non-negative integer"
+    )
+    |> maybe_add_acp_backend_error(
+      invalid_boolean?(Map.get(backend_config, "bypass_permissions")),
+      field,
+      "ACP backend bypass_permissions must be a boolean"
+    )
+    |> maybe_add_acp_backend_error(
+      invalid_optional_binary?(Map.get(backend_config, "model")),
+      field,
+      "ACP backend model must be a non-empty string"
+    )
+    |> maybe_add_acp_backend_error(
+      invalid_optional_binary?(Map.get(backend_config, "mode")),
+      field,
+      "ACP backend mode must be a non-empty string"
+    )
+  end
+
+  defp validate_acp_backend_config(field, _backend_name, _backend_config) do
+    [{field, "ACP backend entries must be maps or command strings"}]
+  end
+
+  defp maybe_add_acp_backend_error(errors, true, field, message), do: [{field, message} | errors]
+  defp maybe_add_acp_backend_error(errors, false, _field, _message), do: errors
+
+  defp normalize_stage_string_value(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> value
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_stage_string_value(value), do: value
+
+  defp backend_error_choices(allowed_backends) do
+    allowed_backends
+    |> Enum.sort()
+    |> Enum.join(", ")
+  end
+
+  defp blank_backend_name?(backend_name), do: not non_empty_binary?(backend_name)
+
+  defp non_empty_binary?(value) when is_binary(value), do: String.trim(value) != ""
+  defp non_empty_binary?(_value), do: false
+
+  defp valid_env_map?(env) when is_map(env) do
+    Enum.all?(env, fn {key, value} ->
+      non_empty_binary?(to_string(key)) and is_binary(value)
+    end)
+  end
+
+  defp valid_env_map?(_env), do: false
+
+  defp invalid_positive_integer?(nil), do: false
+  defp invalid_positive_integer?(value), do: not (is_integer(value) and value > 0)
+
+  defp invalid_non_negative_integer?(nil), do: false
+  defp invalid_non_negative_integer?(value), do: not (is_integer(value) and value >= 0)
+
+  defp invalid_boolean?(nil), do: false
+  defp invalid_boolean?(value), do: not is_boolean(value)
+
+  defp invalid_optional_binary?(nil), do: false
+  defp invalid_optional_binary?(value), do: not non_empty_binary?(value)
 
   defp normalize_key(value) when is_atom(value), do: Atom.to_string(value)
   defp normalize_key(value), do: to_string(value)

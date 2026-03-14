@@ -27,6 +27,17 @@ defmodule SymphonyElixir.Config do
           turn_sandbox_policy: map()
         }
 
+  @type acp_backend_runtime_settings :: %{
+          command: String.t(),
+          env: map(),
+          read_timeout_ms: pos_integer(),
+          stall_timeout_ms: non_neg_integer(),
+          turn_timeout_ms: pos_integer(),
+          bypass_permissions: boolean(),
+          model: String.t() | nil,
+          mode: String.t() | nil
+        }
+
   @spec settings() :: {:ok, Schema.t()} | {:error, term()}
   def settings do
     case Workflow.current() do
@@ -74,9 +85,70 @@ defmodule SymphonyElixir.Config do
     |> StageRouting.backend_for_stage(stage)
   end
 
+  @spec stage_model_override(String.t() | nil) :: String.t() | nil
+  def stage_model_override(stage) when is_binary(stage) do
+    settings!().agent.stage_models
+    |> Map.get(StageRouting.normalize_stage(stage))
+  end
+
+  def stage_model_override(_stage), do: nil
+
+  @spec stage_reasoning_effort_override(String.t() | nil) :: String.t() | nil
+  def stage_reasoning_effort_override(stage) when is_binary(stage) do
+    settings!().agent.stage_reasoning_efforts
+    |> Map.get(StageRouting.normalize_stage(stage))
+  end
+
+  def stage_reasoning_effort_override(_stage), do: nil
+
+  @spec codex_model(String.t() | nil) :: String.t() | nil
+  def codex_model(stage \\ nil) do
+    stage_model_override(stage) || settings!().codex.model
+  end
+
+  @spec codex_reasoning_effort(String.t() | nil) :: String.t() | nil
+  def codex_reasoning_effort(stage \\ nil) do
+    stage_reasoning_effort_override(stage) || settings!().codex.reasoning_effort
+  end
+
   @spec routed_stages(map()) :: [StageRouting.route()]
   def routed_stages(issue) when is_map(issue) do
     StageRouting.routed_stages(issue, settings!())
+  end
+
+  @spec acp_backend?(term()) :: boolean()
+  def acp_backend?(backend_name) do
+    normalized_backend = StageRouting.normalize_backend(backend_name)
+
+    normalized_backend != nil and normalized_backend in Map.keys(settings!().acp.backends)
+  end
+
+  @spec acp_backend_names() :: [String.t()]
+  def acp_backend_names do
+    settings!().acp.backends |> Map.keys() |> Enum.sort()
+  end
+
+  @spec acp_backend_config(term()) :: acp_backend_runtime_settings() | nil
+  def acp_backend_config(backend_name) do
+    normalized_backend = StageRouting.normalize_backend(backend_name)
+
+    with backend when is_binary(backend) <- normalized_backend,
+         %{} = config <- Map.get(settings!().acp.backends, backend) do
+      settings = settings!().acp
+
+      %{
+        command: Map.fetch!(config, "command"),
+        env: Map.get(config, "env", %{}),
+        read_timeout_ms: Map.get(config, "read_timeout_ms", settings.read_timeout_ms),
+        stall_timeout_ms: Map.get(config, "stall_timeout_ms", settings.stall_timeout_ms),
+        turn_timeout_ms: Map.get(config, "turn_timeout_ms", settings.turn_timeout_ms),
+        bypass_permissions: Map.get(config, "bypass_permissions", settings.bypass_permissions),
+        model: Map.get(config, "model"),
+        mode: Map.get(config, "mode")
+      }
+    else
+      _ -> nil
+    end
   end
 
   @spec codex_turn_sandbox_policy(Path.t() | nil) :: map()

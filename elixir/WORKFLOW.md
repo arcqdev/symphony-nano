@@ -19,21 +19,37 @@ workspace:
   root: ~/code/symphony-workspaces
 hooks:
   after_create: |
-    ./hooks/create-worktree.sh
-  before_run: |
-    ./hooks/sync-worktree.sh
+    git clone --depth 1 https://github.com/openai/symphony .
+    if command -v mise >/dev/null 2>&1; then
+      cd elixir && mise trust && mise exec -- mix deps.get
+    fi
   before_remove: |
     cd elixir && mise exec -- mix workspace.before_remove
-    ./hooks/cleanup-workspace.sh
 agent:
+  backend: codex
+  stage_backends:
+    implementer-engineer: codex
+    reviewer-engineer: claude-code
+  stage_models:
+    implementer-engineer: gpt-5.3-codex
+    reviewer-engineer: claude-sonnet-4-6
+  stage_reasoning_efforts:
+    implementer-engineer: medium
   max_concurrent_agents: 10
   max_turns: 20
 codex:
-  command: codex --config shell_environment_policy.inherit=all --config model_reasoning_effort=xhigh --model gpt-5.3-codex app-server
+  command: codex --config shell_environment_policy.inherit=all app-server
+  model: gpt-5.3-codex
+  reasoning_effort: medium
   approval_policy: never
   thread_sandbox: workspace-write
   turn_sandbox_policy:
     type: workspaceWrite
+acp:
+  backends:
+    claude-code:
+      command: claude-agent-acp
+      model: claude-sonnet-4-6
 ---
 
 You are working on a Linear ticket `{{ issue.identifier }}`
@@ -69,6 +85,21 @@ Instructions:
 
 Work only in the provided repository copy. Do not touch any other path.
 
+## Required stage labels
+
+This workflow expects every active engineering ticket to carry both of these Linear labels:
+
+- `implementer-engineer`
+- `reviewer-engineer`
+
+Symphony uses those labels for stage routing:
+
+- `implementer-engineer` runs first on Codex using `gpt-5.3-codex` with `medium` reasoning effort
+- `reviewer-engineer` runs second on Claude Code using `claude-sonnet-4-6`
+
+If those labels are missing, record the workflow drift in the workpad immediately. Do not silently
+pretend the staged review pass happened.
+
 ## Prerequisite: Linear MCP or `linear_graphql` tool is available
 
 The agent should be able to talk to Linear, either via a configured Linear MCP server or injected `linear_graphql` tool. If none are present, stop and ask the user to configure Linear.
@@ -92,6 +123,28 @@ The agent should be able to talk to Linear, either via a configured Linear MCP s
 - Move status only when the matching quality bar is met.
 - Operate autonomously end-to-end unless blocked by missing requirements, secrets, or permissions.
 - Use the blocked-access escape hatch only for true external blockers (missing required tools/auth) after exhausting documented fallbacks.
+
+## Stage contract
+
+When stage routing is active, follow these role contracts strictly.
+
+### `implementer-engineer`
+
+- Act as the primary implementation engineer.
+- Reproduce the issue, create or refine the plan, and implement the required changes.
+- Run the relevant tests and validation for the touched scope before ending the stage.
+- Do not leave the repo in a knowingly red state for the touched scope.
+- Update the workpad so the reviewer can quickly verify what changed, what was tested, and what still deserves extra scrutiny.
+- Do not move the issue to `Human Review` from this stage unless the reviewer stage has already run in the same routed execution.
+
+### `reviewer-engineer`
+
+- Act as a skeptical reviewer-engineer, not a passive summarizer.
+- Read the workpad and inspect the actual diff and touched files before trusting prior validation claims.
+- Run the full validation suite for the repo or affected umbrella project, including all tests that should pass before human review.
+- Do a quick but real scrutiny pass on correctness, regressions, edge cases, and whether the implementation actually matches the ticket.
+- If anything is wrong or suspicious, fix it directly instead of merely commenting on it, then rerun the full validation suite.
+- Only hand off to `Human Review` when the code looks correct and the full validation sweep is green.
 
 ## Related skills
 
@@ -208,6 +261,8 @@ Use this only when completion is blocked by missing required tools or missing au
     - For tickets that started as `Todo` with an attached PR, run the full PR feedback sweep protocol immediately after kickoff and before new feature work.
 5.  Run validation/tests required for the scope.
     - Mandatory gate: execute all ticket-provided `Validation`/`Test Plan`/ `Testing` requirements when present; treat unmet items as incomplete work.
+    - If current routed stage is `implementer-engineer`, run the relevant tests/checks for the touched scope and make sure they pass before ending the stage.
+    - If current routed stage is `reviewer-engineer`, run the full project validation sweep, including all tests required for human-review readiness, and keep fixing issues until that sweep is green.
     - Prefer a targeted proof that directly demonstrates the behavior you changed.
     - You may make temporary local proof edits to validate assumptions (for example: tweak a local build input for `make`, or hardcode a UI account / response path) when this increases confidence.
     - Revert every temporary proof edit before commit/push.
@@ -264,6 +319,7 @@ Use this only when completion is blocked by missing required tools or missing au
 - Step 1/2 checklist is fully complete and accurately reflected in the single workpad comment.
 - Acceptance criteria and required ticket-provided validation items are complete.
 - Validation/tests are green for the latest commit.
+- If routed through `reviewer-engineer`, the reviewer pass has inspected the diff, run the full validation sweep, and fixed any discovered issues before handoff.
 - PR feedback sweep is complete and no actionable comments remain.
 - PR checks are green, branch is pushed, and PR is linked on the issue.
 - Required PR metadata is present (`symphony` label).

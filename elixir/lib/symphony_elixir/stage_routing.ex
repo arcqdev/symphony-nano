@@ -17,9 +17,8 @@ defmodule SymphonyElixir.StageRouting do
   def normalize_backend(value) when is_binary(value) do
     case value |> String.trim() |> String.downcase() do
       "claude" -> "claude-code"
-      "claude-code" -> "claude-code"
-      "codex" -> "codex"
-      _ -> nil
+      "" -> nil
+      backend -> backend
     end
   end
 
