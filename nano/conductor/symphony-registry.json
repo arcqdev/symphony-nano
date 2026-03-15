@@ -35,6 +35,12 @@
       "workflowPath": "/Users/eddie/dev/arcqdev/agent-social/.symphony/WORKFLOW.md",
       "projectSlug": "d1d77cd44579",
       "port": null
+    },
+    "symphony-execution": {
+      "repoPath": "/Users/eddie/dev/arcqdev/symphony",
+      "workflowPath": "/Users/eddie/dev/arcqdev/symphony/WORKFLOW.md",
+      "projectSlug": "142cade597e7",
+      "port": 45129
     }
   }
 }

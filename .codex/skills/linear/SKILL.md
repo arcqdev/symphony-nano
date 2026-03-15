@@ -1,89 +1,96 @@
 ---
 name: linear
 description: |
-  Use Symphony's `linear_graphql` client tool for raw Linear GraphQL
-  operations such as comment editing and upload flows.
+  Manage Linear through the local `linear` CLI for issue reads, comments,
+  state changes, relations, and raw GraphQL fallback via `linear api`.
 ---
 
-# Linear GraphQL
+# Linear CLI
 
-Use this skill for raw Linear GraphQL work during Symphony app-server sessions.
+Use this skill for Linear work in both Codex and Claude sessions in this repo.
 
 ## Primary tool
 
-Use the `linear_graphql` client tool exposed by Symphony's app-server session.
-It reuses Symphony's configured Linear auth for the session.
+Use the local `linear` CLI, authenticated with `LINEAR_API_KEY`.
 
-Tool input:
+On first use in a session:
 
-```json
-{
-  "query": "query or mutation document",
-  "variables": {
-    "optional": "graphql variables object"
-  }
-}
+```bash
+linear auth login -k "$LINEAR_API_KEY"
+linear auth whoami
 ```
 
-Tool behavior:
+If `LINEAR_API_KEY` is missing or `linear` is unavailable, treat Linear work as
+blocked instead of assuming access.
 
-- Send one GraphQL operation per tool call.
-- Treat a top-level `errors` array as a failed GraphQL operation even if the
-  tool call itself completed.
-- Keep queries/mutations narrowly scoped; ask only for the fields you need.
+## Best practices
 
-## Discovering unfamiliar operations
+- Use `linear issue view <identifier> --json` when you need structured issue data.
+- Use `linear issue comment list <identifier>` before posting or editing workpad comments.
+- Prefer `--description-file` and `--body-file` for multi-line markdown.
+- Use one narrow command at a time instead of broad list operations.
+- Fall back to `linear api` only when the regular CLI does not expose the needed field or mutation.
 
-When you need an unfamiliar mutation, input type, or object field, use targeted
-introspection through `linear_graphql`.
+## Quick reference
 
-List mutation names:
+### Issues
 
-```graphql
-query ListMutations {
-  __type(name: "Mutation") {
-    fields {
-      name
-    }
-  }
-}
+```bash
+linear issue view ENG-123
+linear issue view ENG-123 --json
+
+linear issue list --all-states
+linear issue list --project "Project Name"
+
+linear issue update ENG-123 -s "In Progress"
+linear issue update ENG-123 -t "New title"
+linear issue update ENG-123 --description-file /tmp/desc.md
 ```
 
-Inspect a specific input object:
+### Comments
 
-```graphql
-query CommentCreateInputShape {
-  __type(name: "CommentCreateInput") {
-    inputFields {
-      name
-      type {
-        kind
-        name
-        ofType {
-          kind
-          name
-        }
-      }
-    }
-  }
-}
+```bash
+linear issue comment list ENG-123
+linear issue comment add ENG-123 -b "Comment text"
+linear issue comment add ENG-123 --body-file /tmp/comment.md
+linear issue comment update <comment-id> -b "Updated comment text"
+linear issue comment update <comment-id> --body-file /tmp/comment.md
 ```
 
-## Common workflows
+### Relations
 
-### Query an issue by key, identifier, or id
+```bash
+linear issue relation list ENG-123
+linear issue relation add ENG-123 blocked-by ENG-100
+linear issue relation add ENG-123 blocks ENG-456
+```
 
-Use these progressively:
+### Projects, teams, labels
 
-- Start with `issue(id: $key)` when you have a ticket key such as `MT-686`.
-- Fall back to `issues(filter: ...)` when you need identifier search semantics.
-- Once you have the internal issue id, prefer `issue(id: $id)` for narrower reads.
+```bash
+linear project list
+linear project view <project-id>
 
-Lookup by issue key:
+linear team list
+linear team view <team-key>
 
-```graphql
-query IssueByKey($key: String!) {
-  issue(id: $key) {
+linear label list
+```
+
+## Raw GraphQL fallback
+
+Use `linear api` for operations the high-level CLI does not expose directly.
+
+Examples:
+
+```bash
+linear api '{ viewer { id name email } }'
+```
+
+```bash
+linear api --variable id=ENG-123 <<'GRAPHQL'
+query($id: String!) {
+  issue(id: $id) {
     id
     identifier
     title
@@ -92,297 +99,29 @@ query IssueByKey($key: String!) {
       name
       type
     }
-    project {
-      id
-      name
-    }
-    branchName
-    url
-    description
-    updatedAt
-    links {
+  }
+}
+GRAPHQL
+```
+
+```bash
+linear api --variable id=ENG-123 <<'GRAPHQL'
+query($id: String!) {
+  issue(id: $id) {
+    comments(first: 20) {
       nodes {
         id
-        url
-        title
+        body
       }
     }
   }
 }
+GRAPHQL
 ```
 
-Lookup by identifier filter:
+## Symphony-specific guidance
 
-```graphql
-query IssueByIdentifier($identifier: String!) {
-  issues(filter: { identifier: { eq: $identifier } }, first: 1) {
-    nodes {
-      id
-      identifier
-      title
-      state {
-        id
-        name
-        type
-      }
-      project {
-        id
-        name
-      }
-      branchName
-      url
-      description
-      updatedAt
-    }
-  }
-}
-```
-
-Resolve a key to an internal id:
-
-```graphql
-query IssueByIdOrKey($id: String!) {
-  issue(id: $id) {
-    id
-    identifier
-    title
-  }
-}
-```
-
-Read the issue once the internal id is known:
-
-```graphql
-query IssueDetails($id: String!) {
-  issue(id: $id) {
-    id
-    identifier
-    title
-    url
-    description
-    state {
-      id
-      name
-      type
-    }
-    project {
-      id
-      name
-    }
-    attachments {
-      nodes {
-        id
-        title
-        url
-        sourceType
-      }
-    }
-  }
-}
-```
-
-### Query team workflow states for an issue
-
-Use this before changing issue state when you need the exact `stateId`:
-
-```graphql
-query IssueTeamStates($id: String!) {
-  issue(id: $id) {
-    id
-    team {
-      id
-      key
-      name
-      states {
-        nodes {
-          id
-          name
-          type
-        }
-      }
-    }
-  }
-}
-```
-
-### Edit an existing comment
-
-Use `commentUpdate` through `linear_graphql`:
-
-```graphql
-mutation UpdateComment($id: String!, $body: String!) {
-  commentUpdate(id: $id, input: { body: $body }) {
-    success
-    comment {
-      id
-      body
-    }
-  }
-}
-```
-
-### Create a comment
-
-Use `commentCreate` through `linear_graphql`:
-
-```graphql
-mutation CreateComment($issueId: String!, $body: String!) {
-  commentCreate(input: { issueId: $issueId, body: $body }) {
-    success
-    comment {
-      id
-      url
-    }
-  }
-}
-```
-
-### Move an issue to a different state
-
-Use `issueUpdate` with the destination `stateId`:
-
-```graphql
-mutation MoveIssueToState($id: String!, $stateId: String!) {
-  issueUpdate(id: $id, input: { stateId: $stateId }) {
-    success
-    issue {
-      id
-      identifier
-      state {
-        id
-        name
-      }
-    }
-  }
-}
-```
-
-### Attach a GitHub PR to an issue
-
-Use the GitHub-specific attachment mutation when linking a PR:
-
-```graphql
-mutation AttachGitHubPR($issueId: String!, $url: String!, $title: String) {
-  attachmentLinkGitHubPR(
-    issueId: $issueId
-    url: $url
-    title: $title
-    linkKind: links
-  ) {
-    success
-    attachment {
-      id
-      title
-      url
-    }
-  }
-}
-```
-
-If you only need a plain URL attachment and do not care about GitHub-specific
-link metadata, use:
-
-```graphql
-mutation AttachURL($issueId: String!, $url: String!, $title: String) {
-  attachmentLinkURL(issueId: $issueId, url: $url, title: $title) {
-    success
-    attachment {
-      id
-      title
-      url
-    }
-  }
-}
-```
-
-### Introspection patterns used during schema discovery
-
-Use these when the exact field or mutation shape is unclear:
-
-```graphql
-query QueryFields {
-  __type(name: "Query") {
-    fields {
-      name
-    }
-  }
-}
-```
-
-```graphql
-query IssueFieldArgs {
-  __type(name: "Query") {
-    fields {
-      name
-      args {
-        name
-        type {
-          kind
-          name
-          ofType {
-            kind
-            name
-            ofType {
-              kind
-              name
-            }
-          }
-        }
-      }
-    }
-  }
-}
-```
-
-### Upload a video to a comment
-
-Do this in three steps:
-
-1. Call `linear_graphql` with `fileUpload` to get `uploadUrl`, `assetUrl`, and
-   any required upload headers.
-2. Upload the local file bytes to `uploadUrl` with `curl -X PUT` and the exact
-   headers returned by `fileUpload`.
-3. Call `linear_graphql` again with `commentCreate` (or `commentUpdate`) and
-   include the resulting `assetUrl` in the comment body.
-
-Useful mutations:
-
-```graphql
-mutation FileUpload(
-  $filename: String!
-  $contentType: String!
-  $size: Int!
-  $makePublic: Boolean
-) {
-  fileUpload(
-    filename: $filename
-    contentType: $contentType
-    size: $size
-    makePublic: $makePublic
-  ) {
-    success
-    uploadFile {
-      uploadUrl
-      assetUrl
-      headers {
-        key
-        value
-      }
-    }
-  }
-}
-```
-
-## Usage rules
-
-- Use `linear_graphql` for comment edits, uploads, and ad-hoc Linear API
-  queries.
-- Prefer the narrowest issue lookup that matches what you already know:
-  key -> identifier search -> internal id.
-- For state transitions, fetch team states first and use the exact `stateId`
-  instead of hardcoding names inside mutations.
-- Prefer `attachmentLinkGitHubPR` over a generic URL attachment when linking a
-  GitHub PR to a Linear issue.
-- Do not introduce new raw-token shell helpers for GraphQL access.
-- If you need shell work for uploads, only use it for signed upload URLs
-  returned by `fileUpload`; those URLs already carry the needed authorization.
+- Use the same `linear` skill path for both Codex and Claude in this repo.
+- Do not rely on a global Linear MCP server for repo workflows.
+- Do not rely on Symphony's `linear_graphql` dynamic tool as the primary path.
+- If an operation is unavailable through normal `linear` commands, use `linear api` before considering any other integration path.
