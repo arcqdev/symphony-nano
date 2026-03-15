@@ -1,7 +1,7 @@
 ---
 tracker:
   kind: linear
-  project_slug: "symphony-0c79b11b75ea"
+  project_slug: "symphonyclaw"
   active_states:
     - Todo
     - In Progress
@@ -19,7 +19,7 @@ workspace:
   root: ~/code/symphony-workspaces
 hooks:
   after_create: |
-    git clone --depth 1 https://github.com/openai/symphony .
+    git clone --depth 1 https://github.com/arcqdev/symphony-nano.git .
     if command -v mise >/dev/null 2>&1; then
       cd elixir && mise trust && mise exec -- mix deps.get
     fi
@@ -31,15 +31,15 @@ agent:
     implementer-engineer: codex
     reviewer-engineer: claude-code
   stage_models:
-    implementer-engineer: gpt-5.3-codex
+    implementer-engineer: gpt-5.3-codex-spark
     reviewer-engineer: claude-sonnet-4-6
   stage_reasoning_efforts:
     implementer-engineer: medium
   max_concurrent_agents: 10
-  max_turns: 20
+  max_turns: 6
 codex:
   command: codex --config shell_environment_policy.inherit=all app-server
-  model: gpt-5.3-codex
+  model: gpt-5.3-codex-spark
   reasoning_effort: medium
   approval_policy: never
   thread_sandbox: workspace-write
@@ -50,6 +50,8 @@ acp:
     claude-code:
       command: claude-agent-acp
       model: claude-sonnet-4-6
+server:
+  port: 45129
 ---
 
 You are working on a Linear ticket `{{ issue.identifier }}`
@@ -94,15 +96,15 @@ This workflow expects every active engineering ticket to carry both of these Lin
 
 Symphony uses those labels for stage routing:
 
-- `implementer-engineer` runs first on Codex using `gpt-5.3-codex` with `medium` reasoning effort
+- `implementer-engineer` runs first on Codex using `gpt-5.3-codex-spark` with `medium` reasoning effort
 - `reviewer-engineer` runs second on Claude Code using `claude-sonnet-4-6`
 
 If those labels are missing, record the workflow drift in the workpad immediately. Do not silently
 pretend the staged review pass happened.
 
-## Prerequisite: Linear MCP or `linear_graphql` tool is available
+## Prerequisite: `linear` CLI is available
 
-The agent should be able to talk to Linear, either via a configured Linear MCP server or injected `linear_graphql` tool. If none are present, stop and ask the user to configure Linear.
+The agent should be able to talk to Linear through the local `linear` CLI, authenticated with `LINEAR_API_KEY`. If `linear` is unavailable or auth is missing, stop and ask the user to configure Linear CLI access.
 
 ## Default posture
 

@@ -12,6 +12,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   @continuation_retry_delay_ms 1_000
   @failure_retry_base_ms 10_000
+  @max_retry_attempts 2
   # Slightly above the dashboard render interval so "checking now…" can render.
   @poll_transition_render_delay_ms 20
   @empty_codex_totals %{
@@ -555,13 +556,14 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp should_dispatch_issue?(
          %Issue{} = issue,
-         %State{running: running, claimed: claimed} = state,
+         %State{running: running, claimed: claimed, completed: completed} = state,
          active_states,
          terminal_states
        ) do
     candidate_issue?(issue, active_states, terminal_states) and
       !todo_issue_blocked_by_non_terminal?(issue, terminal_states) and
       !MapSet.member?(claimed, issue.id) and
+      !MapSet.member?(completed, issue.id) and
       !Map.has_key?(running, issue.id) and
       available_slots(state) > 0 and
       state_slots_available?(issue, running) and
@@ -778,39 +780,55 @@ defmodule SymphonyElixir.Orchestrator do
        when is_binary(issue_id) and is_map(metadata) do
     previous_retry = Map.get(state.retry_attempts, issue_id, %{attempt: 0})
     next_attempt = if is_integer(attempt), do: attempt, else: previous_retry.attempt + 1
-    delay_ms = retry_delay(next_attempt, metadata)
-    old_timer = Map.get(previous_retry, :timer_ref)
-    retry_token = make_ref()
-    due_at_ms = System.monotonic_time(:millisecond) + delay_ms
-    identifier = pick_retry_identifier(issue_id, previous_retry, metadata)
-    error = pick_retry_error(previous_retry, metadata)
-    worker_host = pick_retry_worker_host(previous_retry, metadata)
-    workspace_path = pick_retry_workspace_path(previous_retry, metadata)
 
-    if is_reference(old_timer) do
-      Process.cancel_timer(old_timer)
-    end
+    if next_attempt > @max_retry_attempts do
+      identifier = pick_retry_identifier(issue_id, previous_retry, metadata)
+      error = pick_retry_error(previous_retry, metadata)
 
-    timer_ref = Process.send_after(self(), {:retry_issue, issue_id, retry_token}, delay_ms)
+      Logger.error(
+        "Retry limit reached for issue_id=#{issue_id} issue_identifier=#{identifier}; " <>
+          "max_retry_attempts=#{@max_retry_attempts} error=#{inspect(error)}. " <>
+          "Suppressing further automatic retries until manual intervention."
+      )
 
-    error_suffix = if is_binary(error), do: " error=#{error}", else: ""
-
-    Logger.warning("Retrying issue_id=#{issue_id} issue_identifier=#{identifier} in #{delay_ms}ms (attempt #{next_attempt})#{error_suffix}")
-
-    %{
       state
-      | retry_attempts:
-          Map.put(state.retry_attempts, issue_id, %{
-            attempt: next_attempt,
-            timer_ref: timer_ref,
-            retry_token: retry_token,
-            due_at_ms: due_at_ms,
-            identifier: identifier,
-            error: error,
-            worker_host: worker_host,
-            workspace_path: workspace_path
-          })
-    }
+      |> complete_issue(issue_id)
+      |> release_issue_claim(issue_id)
+    else
+      delay_ms = retry_delay(next_attempt, metadata)
+      old_timer = Map.get(previous_retry, :timer_ref)
+      retry_token = make_ref()
+      due_at_ms = System.monotonic_time(:millisecond) + delay_ms
+      identifier = pick_retry_identifier(issue_id, previous_retry, metadata)
+      error = pick_retry_error(previous_retry, metadata)
+      worker_host = pick_retry_worker_host(previous_retry, metadata)
+      workspace_path = pick_retry_workspace_path(previous_retry, metadata)
+
+      if is_reference(old_timer) do
+        Process.cancel_timer(old_timer)
+      end
+
+      timer_ref = Process.send_after(self(), {:retry_issue, issue_id, retry_token}, delay_ms)
+
+      error_suffix = if is_binary(error), do: " error=#{error}", else: ""
+
+      Logger.warning("Retrying issue_id=#{issue_id} issue_identifier=#{identifier} in #{delay_ms}ms (attempt #{next_attempt})#{error_suffix}")
+
+      %{
+        state
+        | retry_attempts:
+            Map.put(state.retry_attempts, issue_id, %{
+              attempt: next_attempt,
+              timer_ref: timer_ref,
+              retry_token: retry_token,
+              due_at_ms: due_at_ms,
+              identifier: identifier,
+              error: error,
+              worker_host: worker_host,
+              workspace_path: workspace_path
+            })
+      }
+    end
   end
 
   defp pop_retry_attempt_state(%State{} = state, issue_id, retry_token) when is_reference(retry_token) do
