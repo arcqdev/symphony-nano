@@ -152,6 +152,10 @@ Notes:
   Symphony validation.
 - `agent.max_turns` caps how many back-to-back Codex turns Symphony will run in a single agent
   invocation when a turn completes normally but the issue is still in an active state. Default: `20`.
+- `agent.max_input_tokens` and `agent.max_output_tokens` set cumulative token budgets per issue
+  across all turns and retries. When either limit is exceeded mid-turn, the agent process is killed
+  immediately, the issue is moved to `Human Review`, and a Linear comment is posted with the
+  budget details. Defaults: `4000000` input, `400000` output. Set to `null` to disable either cap.
 - If the Markdown body is blank, Symphony uses a default prompt template that includes the issue
   identifier, title, and body.
 - Use `hooks.after_create` to bootstrap a fresh workspace. For a Git-backed repo, you can run

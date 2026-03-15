@@ -59,6 +59,9 @@ defmodule SymphonyElixir.Orchestrator do
       claimed: MapSet.new(),
       retry_attempts: %{},
       no_progress_attempts: %{},
+      issue_input_token_totals: %{},
+      issue_output_token_totals: %{},
+      token_budget_exceeded: MapSet.new(),
       codex_totals: nil,
       codex_rate_limits: nil
     ]
@@ -149,39 +152,66 @@ defmodule SymphonyElixir.Orchestrator do
       issue_id ->
         {running_entry, state} = pop_running_entry(state, issue_id)
         state = record_session_completion_totals(state, running_entry)
+        state = accumulate_issue_token_totals(state, issue_id, running_entry)
         session_id = running_entry_session_id(running_entry)
+
+        budget_killed = MapSet.member?(state.token_budget_exceeded, issue_id)
+        state = %{state | token_budget_exceeded: MapSet.delete(state.token_budget_exceeded, issue_id)}
 
         {state, no_progress_halted} = apply_no_progress_guard(state, issue_id, running_entry)
 
         state =
-          if no_progress_halted do
-            state
-          else
-            case reason do
-              :normal ->
-                Logger.info("Agent task completed for issue_id=#{issue_id} session_id=#{session_id}; scheduling active-state continuation check")
+          cond do
+            budget_killed ->
+              identifier = Map.get(running_entry, :identifier, issue_id)
+              config = Config.settings!().agent
+              {exceeded_type, cumulative, limit} = token_budget_exceeded_details(state, issue_id, config)
 
-                state
-                |> complete_issue(issue_id)
-                |> schedule_issue_retry(issue_id, 1, %{
-                  identifier: running_entry.identifier,
-                  delay_type: :continuation,
-                  worker_host: Map.get(running_entry, :worker_host),
-                  workspace_path: Map.get(running_entry, :workspace_path)
-                })
+              Logger.error(
+                "Token budget exceeded (#{exceeded_type}) for issue_id=#{issue_id} issue_identifier=#{identifier}; " <>
+                  "cumulative_tokens=#{cumulative} limit=#{limit}. Moving issue to #{@human_review_state}."
+              )
 
-              _ ->
-                Logger.warning("Agent task exited for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}; scheduling retry")
+              maybe_move_issue_to_human_review(
+                issue_id,
+                identifier,
+                "token budget exceeded (#{exceeded_type})",
+                "cumulative #{exceeded_type} tokens #{cumulative} exceeded limit of #{limit}"
+              )
 
-                next_attempt = next_retry_attempt_from_running(running_entry)
+              state
+              |> complete_issue(issue_id)
+              |> release_issue_claim(issue_id)
 
-                schedule_issue_retry(state, issue_id, next_attempt, %{
-                  identifier: running_entry.identifier,
-                  error: "agent exited: #{inspect(reason)}",
-                  worker_host: Map.get(running_entry, :worker_host),
-                  workspace_path: Map.get(running_entry, :workspace_path)
-                })
-            end
+            no_progress_halted ->
+              state
+
+            true ->
+              case reason do
+                :normal ->
+                  Logger.info("Agent task completed for issue_id=#{issue_id} session_id=#{session_id}; scheduling active-state continuation check")
+
+                  state
+                  |> complete_issue(issue_id)
+                  |> schedule_issue_retry(issue_id, 1, %{
+                    identifier: running_entry.identifier,
+                    delay_type: :continuation,
+                    worker_host: Map.get(running_entry, :worker_host),
+                    workspace_path: Map.get(running_entry, :workspace_path)
+                  })
+
+                _ ->
+                  Logger.warning("Agent task exited for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}; scheduling retry")
+
+                  next_attempt = next_retry_attempt_from_running(running_entry)
+
+                  schedule_issue_retry(state, issue_id, next_attempt, %{
+                    identifier: running_entry.identifier,
+                    error: "agent exited: #{inspect(reason)}",
+                    worker_host: Map.get(running_entry, :worker_host),
+                    workspace_path: Map.get(running_entry, :workspace_path)
+                  })
+              end
           end
 
         Logger.info("Agent task finished for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}")
@@ -226,8 +256,12 @@ defmodule SymphonyElixir.Orchestrator do
           |> apply_codex_token_delta(token_delta)
           |> apply_codex_rate_limits(update)
 
+        state = %{state | running: Map.put(running, issue_id, updated_running_entry)}
+
+        state = maybe_enforce_token_budget(state, issue_id, updated_running_entry)
+
         notify_dashboard()
-        {:noreply, %{state | running: Map.put(running, issue_id, updated_running_entry)}}
+        {:noreply, state}
     end
   end
 
@@ -841,6 +875,96 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp apply_no_progress_guard(%State{} = state, _issue_id, _running_entry), do: {state, false}
 
+  defp accumulate_issue_token_totals(%State{} = state, issue_id, running_entry)
+       when is_binary(issue_id) and is_map(running_entry) do
+    run_input = Map.get(running_entry, :codex_input_tokens, 0)
+    run_output = Map.get(running_entry, :codex_output_tokens, 0)
+
+    state =
+      if is_integer(run_input) and run_input > 0 do
+        prev = Map.get(state.issue_input_token_totals, issue_id, 0)
+        %{state | issue_input_token_totals: Map.put(state.issue_input_token_totals, issue_id, prev + run_input)}
+      else
+        state
+      end
+
+    if is_integer(run_output) and run_output > 0 do
+      prev = Map.get(state.issue_output_token_totals, issue_id, 0)
+      %{state | issue_output_token_totals: Map.put(state.issue_output_token_totals, issue_id, prev + run_output)}
+    else
+      state
+    end
+  end
+
+  defp accumulate_issue_token_totals(%State{} = state, _issue_id, _running_entry), do: state
+
+  defp clear_issue_token_totals(%State{} = state, issue_id) do
+    %{state |
+      issue_input_token_totals: Map.delete(state.issue_input_token_totals, issue_id),
+      issue_output_token_totals: Map.delete(state.issue_output_token_totals, issue_id)
+    }
+  end
+
+  defp maybe_enforce_token_budget(%State{} = state, issue_id, running_entry)
+       when is_binary(issue_id) and is_map(running_entry) do
+    config = Config.settings!().agent
+    max_input = config.max_input_tokens
+    max_output = config.max_output_tokens
+
+    prior_input = Map.get(state.issue_input_token_totals, issue_id, 0)
+    prior_output = Map.get(state.issue_output_token_totals, issue_id, 0)
+    current_input = Map.get(running_entry, :codex_input_tokens, 0)
+    current_output = Map.get(running_entry, :codex_output_tokens, 0)
+    cumulative_input = prior_input + current_input
+    cumulative_output = prior_output + current_output
+
+    input_exceeded = is_integer(max_input) and cumulative_input >= max_input
+    output_exceeded = is_integer(max_output) and cumulative_output >= max_output
+
+    if input_exceeded or output_exceeded do
+      pid = Map.get(running_entry, :pid)
+      identifier = Map.get(running_entry, :identifier, issue_id)
+
+      exceeded_type = cond do
+        input_exceeded and output_exceeded -> "input and output"
+        input_exceeded -> "input"
+        true -> "output"
+      end
+
+      Logger.warning(
+        "Token budget exceeded (#{exceeded_type}) for issue_id=#{issue_id} issue_identifier=#{identifier}; " <>
+          "input=#{cumulative_input}/#{max_input || "unlimited"} output=#{cumulative_output}/#{max_output || "unlimited"}. " <>
+          "Killing agent process."
+      )
+
+      if is_pid(pid) and Process.alive?(pid), do: Process.exit(pid, :kill)
+
+      %{state | token_budget_exceeded: MapSet.put(state.token_budget_exceeded, issue_id)}
+    else
+      state
+    end
+  end
+
+  defp maybe_enforce_token_budget(%State{} = state, _issue_id, _running_entry), do: state
+
+  defp token_budget_exceeded_details(%State{} = state, issue_id, config) do
+    input = Map.get(state.issue_input_token_totals, issue_id, 0)
+    output = Map.get(state.issue_output_token_totals, issue_id, 0)
+    max_input = config.max_input_tokens
+    max_output = config.max_output_tokens
+
+    cond do
+      is_integer(max_input) and input >= max_input and is_integer(max_output) and output >= max_output ->
+        {"input and output", "input=#{input} output=#{output}", "input=#{max_input} output=#{max_output}"}
+
+      is_integer(max_input) and input >= max_input ->
+        {"input", input, max_input}
+
+      true ->
+        {"output", output, max_output}
+    end
+  end
+
   defp maybe_move_issue_to_human_review(issue_id, identifier)
        when is_binary(issue_id) and is_binary(identifier) do
     maybe_move_issue_to_human_review(
@@ -1066,6 +1190,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp release_issue_claim(%State{} = state, issue_id) do
     %{state | claimed: MapSet.delete(state.claimed, issue_id)}
+    |> clear_issue_token_totals(issue_id)
   end
 
   defp retry_delay(attempt, metadata) when is_integer(attempt) and attempt > 0 and is_map(metadata) do
@@ -1584,6 +1709,7 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp absolute_token_usage_from_payload(payload) when is_map(payload) do
     absolute_paths = [
+      # Codex app-server paths
       ["params", "msg", "payload", "info", "total_token_usage"],
       [:params, :msg, :payload, :info, :total_token_usage],
       ["params", "msg", "info", "total_token_usage"],
@@ -1591,7 +1717,14 @@ defmodule SymphonyElixir.Orchestrator do
       ["params", "tokenUsage", "total"],
       [:params, :tokenUsage, :total],
       ["tokenUsage", "total"],
-      [:tokenUsage, :total]
+      [:tokenUsage, :total],
+      # ACP session/update paths (Claude Code, etc.)
+      ["params", "usage"],
+      [:params, :usage],
+      ["details", "usage"],
+      [:details, :usage],
+      ["usage"],
+      [:usage]
     ]
 
     explicit_map_at_paths(payload, absolute_paths)
