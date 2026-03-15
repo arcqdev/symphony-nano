@@ -13,6 +13,8 @@ defmodule SymphonyElixir.Orchestrator do
   @continuation_retry_delay_ms 1_000
   @failure_retry_base_ms 10_000
   @max_retry_attempts 2
+  @max_no_progress_runs 3
+  @human_review_state "Human Review"
   # Slightly above the dashboard render interval so "checking now…" can render.
   @poll_transition_render_delay_ms 20
   @empty_codex_totals %{
@@ -38,6 +40,7 @@ defmodule SymphonyElixir.Orchestrator do
       completed: MapSet.new(),
       claimed: MapSet.new(),
       retry_attempts: %{},
+      no_progress_attempts: %{},
       codex_totals: nil,
       codex_rate_limits: nil
     ]
@@ -130,31 +133,37 @@ defmodule SymphonyElixir.Orchestrator do
         state = record_session_completion_totals(state, running_entry)
         session_id = running_entry_session_id(running_entry)
 
+        {state, no_progress_halted} = apply_no_progress_guard(state, issue_id, running_entry)
+
         state =
-          case reason do
-            :normal ->
-              Logger.info("Agent task completed for issue_id=#{issue_id} session_id=#{session_id}; scheduling active-state continuation check")
+          if no_progress_halted do
+            state
+          else
+            case reason do
+              :normal ->
+                Logger.info("Agent task completed for issue_id=#{issue_id} session_id=#{session_id}; scheduling active-state continuation check")
 
-              state
-              |> complete_issue(issue_id)
-              |> schedule_issue_retry(issue_id, 1, %{
-                identifier: running_entry.identifier,
-                delay_type: :continuation,
-                worker_host: Map.get(running_entry, :worker_host),
-                workspace_path: Map.get(running_entry, :workspace_path)
-              })
+                state
+                |> complete_issue(issue_id)
+                |> schedule_issue_retry(issue_id, 1, %{
+                  identifier: running_entry.identifier,
+                  delay_type: :continuation,
+                  worker_host: Map.get(running_entry, :worker_host),
+                  workspace_path: Map.get(running_entry, :workspace_path)
+                })
 
-            _ ->
-              Logger.warning("Agent task exited for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}; scheduling retry")
+              _ ->
+                Logger.warning("Agent task exited for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}; scheduling retry")
 
-              next_attempt = next_retry_attempt_from_running(running_entry)
+                next_attempt = next_retry_attempt_from_running(running_entry)
 
-              schedule_issue_retry(state, issue_id, next_attempt, %{
-                identifier: running_entry.identifier,
-                error: "agent exited: #{inspect(reason)}",
-                worker_host: Map.get(running_entry, :worker_host),
-                workspace_path: Map.get(running_entry, :workspace_path)
-              })
+                schedule_issue_retry(state, issue_id, next_attempt, %{
+                  identifier: running_entry.identifier,
+                  error: "agent exited: #{inspect(reason)}",
+                  worker_host: Map.get(running_entry, :worker_host),
+                  workspace_path: Map.get(running_entry, :workspace_path)
+                })
+            end
           end
 
         Logger.info("Agent task finished for issue_id=#{issue_id} session_id=#{session_id} reason=#{inspect(reason)}")
@@ -772,9 +781,76 @@ defmodule SymphonyElixir.Orchestrator do
     %{
       state
       | completed: MapSet.put(state.completed, issue_id),
-        retry_attempts: Map.delete(state.retry_attempts, issue_id)
+        retry_attempts: Map.delete(state.retry_attempts, issue_id),
+        no_progress_attempts: Map.delete(state.no_progress_attempts, issue_id)
     }
   end
+
+  defp apply_no_progress_guard(%State{} = state, issue_id, running_entry) when is_binary(issue_id) and is_map(running_entry) do
+    codex_total_tokens = Map.get(running_entry, :codex_total_tokens, 0)
+
+    if is_integer(codex_total_tokens) and codex_total_tokens > 0 do
+      {
+        %{state | no_progress_attempts: Map.delete(state.no_progress_attempts, issue_id)},
+        false
+      }
+    else
+      next_count = Map.get(state.no_progress_attempts, issue_id, 0) + 1
+      identifier = Map.get(running_entry, :identifier, issue_id)
+
+      if next_count >= @max_no_progress_runs do
+        Logger.error(
+          "No-progress guard triggered for issue_id=#{issue_id} issue_identifier=#{identifier}; " <>
+            "runs_without_progress=#{next_count}. Moving issue to #{@human_review_state}."
+        )
+
+        maybe_move_issue_to_human_review(issue_id, identifier)
+
+        {
+          state
+          |> complete_issue(issue_id)
+          |> release_issue_claim(issue_id),
+          true
+        }
+      else
+        {
+          %{state | no_progress_attempts: Map.put(state.no_progress_attempts, issue_id, next_count)},
+          false
+        }
+      end
+    end
+  end
+
+  defp apply_no_progress_guard(%State{} = state, _issue_id, _running_entry), do: {state, false}
+
+  defp maybe_move_issue_to_human_review(issue_id, identifier)
+       when is_binary(issue_id) and is_binary(identifier) do
+    case Tracker.update_issue_state(issue_id, @human_review_state) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "Failed to move issue_id=#{issue_id} issue_identifier=#{identifier} to #{@human_review_state}: #{inspect(reason)}"
+        )
+    end
+
+    comment =
+      "Automatic safeguard: moved to #{@human_review_state} after #{@max_no_progress_runs} consecutive runs with no token-progress. " <>
+        "Please inspect credentials/permissions/system setup before resuming."
+
+    case Tracker.create_comment(issue_id, comment) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "Failed to post no-progress guard comment for issue_id=#{issue_id} issue_identifier=#{identifier}: #{inspect(reason)}"
+        )
+    end
+  end
+
+  defp maybe_move_issue_to_human_review(_issue_id, _identifier), do: :ok
 
   defp schedule_issue_retry(%State{} = state, issue_id, attempt, metadata)
        when is_binary(issue_id) and is_map(metadata) do
