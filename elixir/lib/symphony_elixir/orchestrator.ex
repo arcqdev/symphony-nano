@@ -15,6 +15,24 @@ defmodule SymphonyElixir.Orchestrator do
   @max_retry_attempts 2
   @max_no_progress_runs 3
   @human_review_state "Human Review"
+  @fatal_error_signals [
+    "permission denied",
+    "authentication",
+    "auth",
+    "unauthorized",
+    "forbidden",
+    "approval required",
+    "missing api key",
+    "missing token",
+    "invalid token",
+    "access denied",
+    "not configured",
+    "backend unavailable",
+    "command not found",
+    "executable file not found",
+    "could not determine team key",
+    "issue label not found"
+  ]
   # Slightly above the dashboard render interval so "checking now…" can render.
   @poll_transition_render_delay_ms 20
   @empty_codex_totals %{
@@ -825,6 +843,18 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp maybe_move_issue_to_human_review(issue_id, identifier)
        when is_binary(issue_id) and is_binary(identifier) do
+    maybe_move_issue_to_human_review(
+      issue_id,
+      identifier,
+      "no-progress safeguard",
+      "#{@max_no_progress_runs} consecutive runs with no token-progress"
+    )
+  end
+
+  defp maybe_move_issue_to_human_review(_issue_id, _identifier), do: :ok
+
+  defp maybe_move_issue_to_human_review(issue_id, identifier, reason_label, reason_detail)
+       when is_binary(issue_id) and is_binary(identifier) do
     case Tracker.update_issue_state(issue_id, @human_review_state) do
       :ok ->
         :ok
@@ -836,8 +866,8 @@ defmodule SymphonyElixir.Orchestrator do
     end
 
     comment =
-      "Automatic safeguard: moved to #{@human_review_state} after #{@max_no_progress_runs} consecutive runs with no token-progress. " <>
-        "Please inspect credentials/permissions/system setup before resuming."
+      "Automatic safeguard: moved to #{@human_review_state} due to #{reason_label}. " <>
+        "Details: #{reason_detail}. Please inspect credentials/permissions/system setup before resuming."
 
     case Tracker.create_comment(issue_id, comment) do
       :ok ->
@@ -845,65 +875,76 @@ defmodule SymphonyElixir.Orchestrator do
 
       {:error, reason} ->
         Logger.error(
-          "Failed to post no-progress guard comment for issue_id=#{issue_id} issue_identifier=#{identifier}: #{inspect(reason)}"
+          "Failed to post safeguard comment for issue_id=#{issue_id} issue_identifier=#{identifier}: #{inspect(reason)}"
         )
     end
   end
 
-  defp maybe_move_issue_to_human_review(_issue_id, _identifier), do: :ok
+  defp maybe_move_issue_to_human_review(_issue_id, _identifier, _reason_label, _reason_detail), do: :ok
 
   defp schedule_issue_retry(%State{} = state, issue_id, attempt, metadata)
        when is_binary(issue_id) and is_map(metadata) do
     previous_retry = Map.get(state.retry_attempts, issue_id, %{attempt: 0})
     next_attempt = if is_integer(attempt), do: attempt, else: previous_retry.attempt + 1
+    identifier = pick_retry_identifier(issue_id, previous_retry, metadata)
+    error = pick_retry_error(previous_retry, metadata)
 
-    if next_attempt > @max_retry_attempts do
-      identifier = pick_retry_identifier(issue_id, previous_retry, metadata)
-      error = pick_retry_error(previous_retry, metadata)
+    cond do
+      fatal_error?(error) ->
+        Logger.error(
+          "Fatal-error guard triggered for issue_id=#{issue_id} issue_identifier=#{identifier}; " <>
+            "error=#{inspect(error)}. Moving issue to #{@human_review_state} without retry."
+        )
 
-      Logger.error(
-        "Retry limit reached for issue_id=#{issue_id} issue_identifier=#{identifier}; " <>
-          "max_retry_attempts=#{@max_retry_attempts} error=#{inspect(error)}. " <>
-          "Suppressing further automatic retries until manual intervention."
-      )
+        maybe_move_issue_to_human_review(issue_id, identifier, "fatal error", inspect(error))
 
-      state
-      |> complete_issue(issue_id)
-      |> release_issue_claim(issue_id)
-    else
-      delay_ms = retry_delay(next_attempt, metadata)
-      old_timer = Map.get(previous_retry, :timer_ref)
-      retry_token = make_ref()
-      due_at_ms = System.monotonic_time(:millisecond) + delay_ms
-      identifier = pick_retry_identifier(issue_id, previous_retry, metadata)
-      error = pick_retry_error(previous_retry, metadata)
-      worker_host = pick_retry_worker_host(previous_retry, metadata)
-      workspace_path = pick_retry_workspace_path(previous_retry, metadata)
-
-      if is_reference(old_timer) do
-        Process.cancel_timer(old_timer)
-      end
-
-      timer_ref = Process.send_after(self(), {:retry_issue, issue_id, retry_token}, delay_ms)
-
-      error_suffix = if is_binary(error), do: " error=#{error}", else: ""
-
-      Logger.warning("Retrying issue_id=#{issue_id} issue_identifier=#{identifier} in #{delay_ms}ms (attempt #{next_attempt})#{error_suffix}")
-
-      %{
         state
-        | retry_attempts:
-            Map.put(state.retry_attempts, issue_id, %{
-              attempt: next_attempt,
-              timer_ref: timer_ref,
-              retry_token: retry_token,
-              due_at_ms: due_at_ms,
-              identifier: identifier,
-              error: error,
-              worker_host: worker_host,
-              workspace_path: workspace_path
-            })
-      }
+        |> complete_issue(issue_id)
+        |> release_issue_claim(issue_id)
+
+      next_attempt > @max_retry_attempts ->
+        Logger.error(
+          "Retry limit reached for issue_id=#{issue_id} issue_identifier=#{identifier}; " <>
+            "max_retry_attempts=#{@max_retry_attempts} error=#{inspect(error)}. " <>
+            "Suppressing further automatic retries until manual intervention."
+        )
+
+        state
+        |> complete_issue(issue_id)
+        |> release_issue_claim(issue_id)
+
+      true ->
+        delay_ms = retry_delay(next_attempt, metadata)
+        old_timer = Map.get(previous_retry, :timer_ref)
+        retry_token = make_ref()
+        due_at_ms = System.monotonic_time(:millisecond) + delay_ms
+        worker_host = pick_retry_worker_host(previous_retry, metadata)
+        workspace_path = pick_retry_workspace_path(previous_retry, metadata)
+
+        if is_reference(old_timer) do
+          Process.cancel_timer(old_timer)
+        end
+
+        timer_ref = Process.send_after(self(), {:retry_issue, issue_id, retry_token}, delay_ms)
+
+        error_suffix = if is_binary(error), do: " error=#{error}", else: ""
+
+        Logger.warning("Retrying issue_id=#{issue_id} issue_identifier=#{identifier} in #{delay_ms}ms (attempt #{next_attempt})#{error_suffix}")
+
+        %{
+          state
+          | retry_attempts:
+              Map.put(state.retry_attempts, issue_id, %{
+                attempt: next_attempt,
+                timer_ref: timer_ref,
+                retry_token: retry_token,
+                due_at_ms: due_at_ms,
+                identifier: identifier,
+                error: error,
+                worker_host: worker_host,
+                workspace_path: workspace_path
+              })
+        }
     end
   end
 
@@ -1053,6 +1094,13 @@ defmodule SymphonyElixir.Orchestrator do
   defp pick_retry_error(previous_retry, metadata) do
     metadata[:error] || Map.get(previous_retry, :error)
   end
+
+  defp fatal_error?(error) when is_binary(error) do
+    normalized = String.downcase(error)
+    Enum.any?(@fatal_error_signals, &String.contains?(normalized, &1))
+  end
+
+  defp fatal_error?(_error), do: false
 
   defp pick_retry_worker_host(previous_retry, metadata) do
     metadata[:worker_host] || Map.get(previous_retry, :worker_host)
