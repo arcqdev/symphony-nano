@@ -860,9 +860,7 @@ defmodule SymphonyElixir.Orchestrator do
         :ok
 
       {:error, reason} ->
-        Logger.error(
-          "Failed to move issue_id=#{issue_id} issue_identifier=#{identifier} to #{@human_review_state}: #{inspect(reason)}"
-        )
+        Logger.error("Failed to move issue_id=#{issue_id} issue_identifier=#{identifier} to #{@human_review_state}: #{inspect(reason)}")
     end
 
     comment =
@@ -874,9 +872,7 @@ defmodule SymphonyElixir.Orchestrator do
         :ok
 
       {:error, reason} ->
-        Logger.error(
-          "Failed to post safeguard comment for issue_id=#{issue_id} issue_identifier=#{identifier}: #{inspect(reason)}"
-        )
+        Logger.error("Failed to post safeguard comment for issue_id=#{issue_id} issue_identifier=#{identifier}: #{inspect(reason)}")
     end
   end
 
@@ -1019,18 +1015,26 @@ defmodule SymphonyElixir.Orchestrator do
   defp cleanup_issue_workspace(_identifier, _worker_host), do: :ok
 
   defp run_terminal_workspace_cleanup do
-    case Tracker.fetch_issues_by_states(Config.settings!().tracker.terminal_states) do
-      {:ok, issues} ->
-        issues
-        |> Enum.each(fn
-          %Issue{identifier: identifier} when is_binary(identifier) ->
-            cleanup_issue_workspace(identifier)
+    try do
+      case Tracker.fetch_issues_by_states(Config.settings!().tracker.terminal_states) do
+        {:ok, issues} ->
+          issues
+          |> Enum.each(fn
+            %Issue{identifier: identifier} when is_binary(identifier) ->
+              cleanup_issue_workspace(identifier)
 
-          _ ->
-            :ok
-        end)
+            _ ->
+              :ok
+          end)
 
-      {:error, reason} ->
+        {:error, reason} ->
+          Logger.warning("Skipping startup terminal workspace cleanup; failed to fetch terminal issues: #{inspect(reason)}")
+      end
+    rescue
+      reason ->
+        Logger.warning("Skipping startup terminal workspace cleanup; failed to fetch terminal issues: #{Exception.message(reason)}")
+    catch
+      _kind, reason ->
         Logger.warning("Skipping startup terminal workspace cleanup; failed to fetch terminal issues: #{inspect(reason)}")
     end
   end

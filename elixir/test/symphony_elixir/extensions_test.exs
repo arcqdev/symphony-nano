@@ -5,7 +5,9 @@ defmodule SymphonyElixir.ExtensionsTest do
   import Phoenix.LiveViewTest
 
   alias SymphonyElixir.Linear.Adapter
+  alias SymphonyElixir.Config
   alias SymphonyElixir.Tracker.Memory
+  alias SymphonyElixir.Tracker.Stub
 
   @endpoint SymphonyElixirWeb.Endpoint
 
@@ -203,6 +205,40 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "linear")
     assert SymphonyElixir.Tracker.adapter() == Adapter
+  end
+
+  test "tracker delegates to stub adapter" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "stub")
+
+    assert Config.settings!().tracker.kind == "stub"
+    assert SymphonyElixir.Tracker.adapter() == Stub
+
+    :ok = Stub.clear_for_test()
+    Application.put_env(:symphony_elixir, :stub_tracker_recipient, self())
+
+    on_exit(fn ->
+      Application.delete_env(:symphony_elixir, :stub_tracker_recipient)
+    end)
+
+    assert {:ok, issue} =
+             Stub.submit_request(%{
+               id: "stub-memory-issue",
+               identifier: "ST-555",
+               title: "Stub delegate issue",
+               state: "Todo",
+               project_slug: "project"
+             })
+
+    assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_candidate_issues()
+    assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issues_by_states(["todo"])
+    assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issue_states_by_ids(["stub-memory-issue"])
+
+    assert :ok = Stub.create_comment("stub-memory-issue", "delegated comment")
+    assert_receive {:stub_tracker_comment, "stub-memory-issue", "delegated comment"}
+    assert Stub.comments_for_test("stub-memory-issue") == ["delegated comment"]
+
+    assert :ok = Stub.update_issue_state("stub-memory-issue", "Done")
+    assert Stub.issue_for_test("stub-memory-issue").state == "Done"
   end
 
   test "linear adapter delegates reads and validates mutation responses" do
@@ -438,6 +474,9 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert json_response(post(build_conn(), "/api/v1/state", %{}), 405) ==
              %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed"}}
 
+    assert json_response(get(build_conn(), "/api/v1/stub/intake"), 405) ==
+             %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed"}}
+
     assert json_response(get(build_conn(), "/api/v1/refresh"), 405) ==
              %{"error" => %{"code" => "method_not_allowed", "message" => "Method not allowed"}}
 
@@ -465,6 +504,44 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "message" => "Orchestrator is unavailable"
                }
              }
+  end
+
+  test "stub intake endpoint rejects non-stub tracker configuration" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "memory")
+    start_test_endpoint(orchestrator: Module.concat(__MODULE__, :StubIntakeGuardOrchestrator))
+
+    assert json_response(
+             post(build_conn(), "/api/v1/stub/intake", %{
+               "id" => "non-stub-reject",
+               "title" => "Rejected payload",
+               "state" => "Todo",
+               "project_slug" => "execution"
+             }),
+             409
+           ) == %{
+             "error" => %{
+               "code" => "unsupported_tracker",
+               "message" => "Tracker kind is not stub"
+             }
+           }
+  end
+
+  test "stub intake endpoint validates required payload for stub tracker mode" do
+    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "stub")
+    start_test_endpoint(orchestrator: Module.concat(__MODULE__, :StubIntakeValidationOrchestrator))
+
+    assert json_response(
+             post(build_conn(), "/api/v1/stub/intake", %{
+               "id" => "stub-validate-missing-title",
+               "project_slug" => "execution"
+             }),
+             422
+           ) == %{
+             "error" => %{
+               "code" => "missing_field",
+               "message" => "Missing required field: title"
+             }
+           }
   end
 
   test "phoenix observability api preserves snapshot timeout behavior" do

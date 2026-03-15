@@ -92,6 +92,9 @@ Minimal example:
 tracker:
   kind: linear
   project_slug: "..."
+  # For deterministic local testing, set:
+  # kind: stub
+  # and omit api_key; project_slug still filters intake.
 workspace:
   root: ~/code/workspaces
 hooks:
@@ -156,6 +159,12 @@ Notes:
 - If a hook needs `mise exec` inside a freshly cloned workspace, trust the repo config and fetch
   the project dependencies in `hooks.after_create` before invoking `mise` later from other hooks.
 - `tracker.api_key` reads from `LINEAR_API_KEY` when unset or when value is `$LINEAR_API_KEY`.
+- `tracker.kind: stub` uses the in-process stub channel for deterministic e2e and local replay.
+  Stub mode ignores `tracker.api_key`, keeps all issue payloads in-memory, and honors
+  `tracker.project_slug` filtering so tests can target the active execution project.
+- In stub mode, connector traffic can be injected through:
+  - `POST /api/v1/stub/intake` with JSON issue payloads (`id` or `identifier`, `title`, optional
+    metadata).
 - For path values, `~` is expanded to the home directory.
 - For env-backed path values, use `$VAR`. `workspace.root` resolves `$VAR` before path handling,
   while `codex.command` stays a shell command string and any `$VAR` expansion there happens in the
@@ -184,7 +193,8 @@ acp:
 - If a later reload fails, Symphony keeps running with the last known good workflow and logs the
   reload error until the file is fixed.
 - `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
-  `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`.
+  `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, `/api/v1/refresh`, and
+  `/api/v1/stub/intake` for deterministic stub-channel submission.
 
 ## Web dashboard
 
@@ -206,6 +216,14 @@ The observability UI now runs on a minimal Phoenix stack:
 
 ```bash
 make all
+```
+
+Run the deterministic stub-channel end-to-end test without external tracker credentials for fast local loop checks:
+
+```bash
+cd elixir
+MIX_ENV=test mix test test/symphony_elixir/stub_e2e_test.exs
+MIX_ENV=test mix test test/symphony_elixir/tracker_stub_test.exs
 ```
 
 Run the real external end-to-end test only when you want Symphony to create disposable Linear

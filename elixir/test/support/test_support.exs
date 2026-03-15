@@ -43,6 +43,9 @@ defmodule SymphonyElixir.TestSupport do
           Application.delete_env(:symphony_elixir, :server_port_override)
           Application.delete_env(:symphony_elixir, :memory_tracker_issues)
           Application.delete_env(:symphony_elixir, :memory_tracker_recipient)
+          Application.delete_env(:symphony_elixir, :stub_tracker_issues)
+          Application.delete_env(:symphony_elixir, :stub_tracker_issue_comments)
+          Application.delete_env(:symphony_elixir, :stub_tracker_recipient)
           File.rm_rf(workflow_root)
         end)
 
@@ -70,21 +73,30 @@ defmodule SymphonyElixir.TestSupport do
   def restore_env(key, value), do: System.put_env(key, value)
 
   def stop_default_http_server do
-    case Enum.find(Supervisor.which_children(SymphonyElixir.Supervisor), fn
-           {SymphonyElixir.HttpServer, _pid, _type, _modules} -> true
-           _child -> false
-         end) do
-      {SymphonyElixir.HttpServer, pid, _type, _modules} when is_pid(pid) ->
-        :ok = Supervisor.terminate_child(SymphonyElixir.Supervisor, SymphonyElixir.HttpServer)
+    case Process.whereis(SymphonyElixir.Supervisor) do
+      nil ->
+        :ok
 
-        if Process.alive?(pid) do
-          Process.exit(pid, :normal)
+      supervisor_pid ->
+        child =
+          Enum.find(Supervisor.which_children(supervisor_pid), fn
+            {SymphonyElixir.HttpServer, _pid, _type, _modules} -> true
+            _child -> false
+          end)
+
+        case child do
+          {SymphonyElixir.HttpServer, pid, _type, _modules} when is_pid(pid) ->
+            :ok = Supervisor.terminate_child(supervisor_pid, SymphonyElixir.HttpServer)
+
+            if Process.alive?(pid) do
+              Process.exit(pid, :normal)
+            end
+
+            :ok
+
+          _ ->
+            :ok
         end
-
-        :ok
-
-      _ ->
-        :ok
     end
   end
 

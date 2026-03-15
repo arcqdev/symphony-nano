@@ -7,6 +7,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
 
   alias Plug.Conn
   alias SymphonyElixirWeb.{Endpoint, Presenter}
+  alias SymphonyElixir.Tracker.Stub
 
   @spec state(Conn.t(), map()) :: Conn.t()
   def state(conn, _params) do
@@ -21,6 +22,33 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
 
       {:error, :issue_not_found} ->
         error_response(conn, 404, "issue_not_found", "Issue not found")
+    end
+  end
+
+  @spec stub_intake(Conn.t(), map()) :: Conn.t()
+  def stub_intake(conn, _params) do
+    with :ok <- ensure_stub_mode(),
+         {:ok, submit_params} <- decode_stub_payload(conn),
+         {:ok, issue} <- Stub.submit_intake_request(submit_params) do
+      conn
+      |> put_status(202)
+      |> json(%{
+        "status" => "accepted",
+        "issue_id" => issue.id,
+        "issue_identifier" => issue.identifier
+      })
+    else
+      :error_not_stub ->
+        error_response(conn, 409, "unsupported_tracker", "Tracker kind is not stub")
+
+      {:error, {:missing_required_field, field}} ->
+        error_response(conn, 422, "missing_field", "Missing required field: #{field}")
+
+      {:error, {:invalid_payload, reason}} ->
+        error_response(conn, 400, "invalid_payload", inspect(reason))
+
+      {:error, reason} ->
+        error_response(conn, 400, "bad_request", inspect(reason))
     end
   end
 
@@ -59,5 +87,21 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
 
   defp snapshot_timeout_ms do
     Endpoint.config(:snapshot_timeout_ms) || 15_000
+  end
+
+  defp ensure_stub_mode do
+    config = SymphonyElixir.Config.settings!()
+
+    if config.tracker.kind == "stub" do
+      :ok
+    else
+      :error_not_stub
+    end
+  end
+
+  defp decode_stub_payload(%Conn{params: params}) when is_map(params), do: {:ok, params}
+
+  defp decode_stub_payload(%Conn{}) do
+    {:error, {:invalid_payload, :missing_map}}
   end
 end
