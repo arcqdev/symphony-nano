@@ -5,7 +5,11 @@ defmodule SymphonyElixir.TrackerStubTest do
   alias SymphonyElixir.Config
 
   test "stub intake validates required fields and normalizes request payloads" do
-    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "stub", tracker_project_slug: "execution")
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "stub",
+      tracker_project_slug: "execution"
+    )
+
     assert Config.settings!().tracker.kind == "stub"
     assert SymphonyElixir.Tracker.adapter() == Stub
     :ok = Stub.clear_for_test()
@@ -50,13 +54,71 @@ defmodule SymphonyElixir.TrackerStubTest do
     assert id_fallback.id == "ST-1002"
     assert id_fallback.identifier == "ST-1002"
 
-    {:ok, id_as_identifier} = Stub.submit_request(%{"id" => "ST-1003", "title" => "ID-only example"})
+    {:ok, id_as_identifier} =
+      Stub.submit_request(%{"id" => "ST-1003", "title" => "ID-only example"})
+
     assert id_as_identifier.id == "ST-1003"
     assert id_as_identifier.identifier == "ST-1003"
   end
 
+  test "stub intake accepts node sidecar payload shape" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "stub",
+      tracker_project_slug: "execution"
+    )
+
+    :ok = Stub.clear_for_test()
+
+    {:ok, issue} =
+      Stub.submit_request(%{
+        "issue" => %{
+          "id" => "sidecar-issue-1",
+          "identifier" => "ST-3000",
+          "title" => "Node sidecar intake",
+          "description" => "stub channel e2e payload",
+          "state" => %{"name" => "Todo"},
+          "projectSlug" => "execution",
+          "branchName" => "feature/stub-sidecar",
+          "assignee" => %{"id" => "user-123"},
+          "labels" => [%{"name" => "Planner"}, "implementer"],
+          "inverseRelations" => %{
+            "nodes" => [
+              %{
+                "type" => "blocks",
+                "issue" => %{
+                  "id" => "blocker-1",
+                  "identifier" => "BL-1",
+                  "state" => %{"name" => "In Progress"}
+                }
+              },
+              %{"type" => "relates", "issue" => %{"id" => "ignore-me"}}
+            ]
+          },
+          "createdAt" => "2026-03-14T10:00:00Z",
+          "updatedAt" => "2026-03-14T10:05:00Z"
+        }
+      })
+
+    assert issue.id == "sidecar-issue-1"
+    assert issue.identifier == "ST-3000"
+    assert issue.project_slug == "execution"
+    assert issue.branch_name == "feature/stub-sidecar"
+    assert issue.assignee_id == "user-123"
+    assert issue.state == "Todo"
+    assert issue.labels == ["Planner", "implementer"]
+    assert issue.blocked_by == [%{id: "blocker-1", identifier: "BL-1", state: "In Progress"}]
+    assert %DateTime{} = issue.created_at
+    assert %DateTime{} = issue.updated_at
+
+    assert %Issue{} = Stub.issue_for_test("sidecar-issue-1")
+  end
+
   test "stub tracker filters by configured project and tracks issue lifecycle metadata" do
-    write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "stub", tracker_project_slug: "execution")
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_kind: "stub",
+      tracker_project_slug: "execution"
+    )
+
     :ok = Stub.clear_for_test()
     Application.put_env(:symphony_elixir, :stub_tracker_recipient, self())
 
