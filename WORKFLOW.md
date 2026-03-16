@@ -26,9 +26,9 @@ hooks:
   before_remove: |
     cd elixir && mise exec -- mix workspace.before_remove
 agent:
-  backend: openai-codex
+  backend: codex
   stage_backends:
-    implementer-engineer: openai-codex
+    implementer-engineer: codex
     reviewer-engineer: claude-code
   stage_models:
     implementer-engineer: gpt-5.4
