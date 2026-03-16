@@ -32,7 +32,7 @@ agent:
     reviewer-engineer: claude-code
   stage_models:
     implementer-engineer: gpt-5.3-codex-spark
-    reviewer-engineer: claude-sonnet-4-6
+    reviewer-engineer: sonnet
   stage_reasoning_efforts:
     implementer-engineer: medium
   max_concurrent_agents: 10
@@ -49,7 +49,7 @@ acp:
   backends:
     claude-code:
       command: claude-agent-acp
-      model: claude-sonnet-4-6
+      model: sonnet
 server:
   port: 45129
 ---
@@ -97,7 +97,7 @@ This workflow expects every active engineering ticket to carry both of these Lin
 Symphony uses those labels for stage routing:
 
 - `implementer-engineer` runs first on Codex using `gpt-5.3-codex-spark` with `medium` reasoning effort
-- `reviewer-engineer` runs second on Claude Code using `claude-sonnet-4-6`
+- `reviewer-engineer` runs second on Claude Code using `sonnet`
 
 If those labels are missing, record the workflow drift in the workpad immediately. Do not silently
 pretend the staged review pass happened.
