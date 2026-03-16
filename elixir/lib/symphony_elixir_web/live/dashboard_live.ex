@@ -5,7 +5,8 @@ defmodule SymphonyElixirWeb.DashboardLive do
 
   use Phoenix.LiveView, layout: {SymphonyElixirWeb.Layouts, :app}
 
-  alias SymphonyElixirWeb.{Endpoint, ObservabilityPubSub, Presenter}
+  alias SymphonyElixir.ObservabilitySurface
+  alias SymphonyElixirWeb.{Endpoint, ObservabilityPubSub}
   @runtime_tick_ms 1_000
 
   @impl true
@@ -250,7 +251,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
   end
 
   defp load_payload do
-    Presenter.state_payload(orchestrator(), snapshot_timeout_ms())
+    ObservabilitySurface.state_payload(orchestrator(), snapshot_timeout_ms())
   end
 
   defp orchestrator do

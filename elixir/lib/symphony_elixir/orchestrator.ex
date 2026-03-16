@@ -7,7 +7,7 @@ defmodule SymphonyElixir.Orchestrator do
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.{AgentRunner, Config, StatusDashboard, Tracker, Workspace}
+  alias SymphonyElixir.{AgentRunner, Config, Scheduler, StatusDashboard, Tracker, Workspace}
   alias SymphonyElixir.Linear.Issue
 
   @continuation_retry_delay_ms 1_000
@@ -54,6 +54,7 @@ defmodule SymphonyElixir.Orchestrator do
       :poll_check_in_progress,
       :tick_timer_ref,
       :tick_token,
+      :scheduler,
       running: %{},
       completed: MapSet.new(),
       claimed: MapSet.new(),
@@ -74,8 +75,9 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @impl true
-  def init(_opts) do
-    now_ms = System.monotonic_time(:millisecond)
+  def init(opts) do
+    scheduler = Keyword.get(opts, :scheduler, SymphonyElixir.Scheduler.System)
+    now_ms = Scheduler.monotonic_time(scheduler, :millisecond)
     config = Config.settings!()
 
     state = %State{
@@ -85,6 +87,7 @@ defmodule SymphonyElixir.Orchestrator do
       poll_check_in_progress: false,
       tick_timer_ref: nil,
       tick_token: nil,
+      scheduler: scheduler,
       codex_totals: @empty_codex_totals,
       codex_rate_limits: nil
     }
@@ -109,7 +112,7 @@ defmodule SymphonyElixir.Orchestrator do
     }
 
     notify_dashboard()
-    :ok = schedule_poll_cycle_start()
+    :ok = schedule_poll_cycle_start(state)
     {:noreply, state}
   end
 
@@ -127,7 +130,7 @@ defmodule SymphonyElixir.Orchestrator do
     }
 
     notify_dashboard()
-    :ok = schedule_poll_cycle_start()
+    :ok = schedule_poll_cycle_start(state)
     {:noreply, state}
   end
 
@@ -899,10 +902,7 @@ defmodule SymphonyElixir.Orchestrator do
   defp accumulate_issue_token_totals(%State{} = state, _issue_id, _running_entry), do: state
 
   defp clear_issue_token_totals(%State{} = state, issue_id) do
-    %{state |
-      issue_input_token_totals: Map.delete(state.issue_input_token_totals, issue_id),
-      issue_output_token_totals: Map.delete(state.issue_output_token_totals, issue_id)
-    }
+    %{state | issue_input_token_totals: Map.delete(state.issue_input_token_totals, issue_id), issue_output_token_totals: Map.delete(state.issue_output_token_totals, issue_id)}
   end
 
   defp maybe_enforce_token_budget(%State{} = state, issue_id, running_entry)
@@ -925,11 +925,12 @@ defmodule SymphonyElixir.Orchestrator do
       pid = Map.get(running_entry, :pid)
       identifier = Map.get(running_entry, :identifier, issue_id)
 
-      exceeded_type = cond do
-        input_exceeded and output_exceeded -> "input and output"
-        input_exceeded -> "input"
-        true -> "output"
-      end
+      exceeded_type =
+        cond do
+          input_exceeded and output_exceeded -> "input and output"
+          input_exceeded -> "input"
+          true -> "output"
+        end
 
       Logger.warning(
         "Token budget exceeded (#{exceeded_type}) for issue_id=#{issue_id} issue_identifier=#{identifier}; " <>
@@ -1037,15 +1038,16 @@ defmodule SymphonyElixir.Orchestrator do
         delay_ms = retry_delay(next_attempt, metadata)
         old_timer = Map.get(previous_retry, :timer_ref)
         retry_token = make_ref()
-        due_at_ms = System.monotonic_time(:millisecond) + delay_ms
+        due_at_ms = Scheduler.monotonic_time(state.scheduler, :millisecond) + delay_ms
         worker_host = pick_retry_worker_host(previous_retry, metadata)
         workspace_path = pick_retry_workspace_path(previous_retry, metadata)
 
         if is_reference(old_timer) do
-          Process.cancel_timer(old_timer)
+          Scheduler.cancel_timer(state.scheduler, old_timer)
         end
 
-        timer_ref = Process.send_after(self(), {:retry_issue, issue_id, retry_token}, delay_ms)
+        timer_ref =
+          Scheduler.send_after(state.scheduler, self(), {:retry_issue, issue_id, retry_token}, delay_ms)
 
         error_suffix = if is_binary(error), do: " error=#{error}", else: ""
 
@@ -1524,22 +1526,22 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp schedule_tick(%State{} = state, delay_ms) when is_integer(delay_ms) and delay_ms >= 0 do
     if is_reference(state.tick_timer_ref) do
-      Process.cancel_timer(state.tick_timer_ref)
+      Scheduler.cancel_timer(state.scheduler, state.tick_timer_ref)
     end
 
     tick_token = make_ref()
-    timer_ref = Process.send_after(self(), {:tick, tick_token}, delay_ms)
+    timer_ref = Scheduler.send_after(state.scheduler, self(), {:tick, tick_token}, delay_ms)
 
     %{
       state
       | tick_timer_ref: timer_ref,
         tick_token: tick_token,
-        next_poll_due_at_ms: System.monotonic_time(:millisecond) + delay_ms
+        next_poll_due_at_ms: Scheduler.monotonic_time(state.scheduler, :millisecond) + delay_ms
     }
   end
 
-  defp schedule_poll_cycle_start do
-    :timer.send_after(@poll_transition_render_delay_ms, self(), :run_poll_cycle)
+  defp schedule_poll_cycle_start(%State{} = state) do
+    Scheduler.send_after(state.scheduler, self(), :run_poll_cycle, @poll_transition_render_delay_ms)
     :ok
   end
 

@@ -3,12 +3,14 @@ defmodule SymphonyElixir.PromptBuilder do
   Builds agent prompts from Linear issue data.
   """
 
-  alias SymphonyElixir.{Config, Workflow}
+  alias SymphonyElixir.{Config, MemoryBackend, SkillRuntime, Workflow}
 
   @render_opts [strict_variables: true, strict_filters: true]
 
   @spec build_prompt(SymphonyElixir.Linear.Issue.t(), keyword()) :: String.t()
   def build_prompt(issue, opts \\ []) do
+    workspace = Keyword.get(opts, :workspace)
+
     template =
       Workflow.current()
       |> prompt_template!()
@@ -18,7 +20,9 @@ defmodule SymphonyElixir.PromptBuilder do
     |> Solid.render!(
       %{
         "attempt" => Keyword.get(opts, :attempt),
-        "issue" => issue |> Map.from_struct() |> to_solid_map()
+        "issue" => issue |> Map.from_struct() |> to_solid_map(),
+        "memory" => issue |> MemoryBackend.prompt_context(workspace, opts) |> to_solid_map(),
+        "skills" => issue |> SkillRuntime.prompt_context(workspace, opts) |> to_solid_map()
       },
       @render_opts
     )

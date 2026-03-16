@@ -164,7 +164,7 @@ defmodule SymphonyElixir.AgentRunner do
          backend_module,
          backend
        ) do
-    prompt = build_turn_prompt(issue, opts, turn_number, max_turns)
+    prompt = build_turn_prompt(issue, workspace, opts, turn_number, max_turns)
 
     with {:ok, turn_session} <-
            backend_module.run_turn(
@@ -207,9 +207,10 @@ defmodule SymphonyElixir.AgentRunner do
     end
   end
 
-  defp build_turn_prompt(issue, opts, 1, _max_turns), do: PromptBuilder.build_prompt(issue, opts)
+  defp build_turn_prompt(issue, workspace, opts, 1, _max_turns),
+    do: PromptBuilder.build_prompt(issue, Keyword.put(opts, :workspace, workspace))
 
-  defp build_turn_prompt(_issue, _opts, turn_number, max_turns) do
+  defp build_turn_prompt(_issue, _workspace, _opts, turn_number, max_turns) do
     """
     Continuation guidance:
 

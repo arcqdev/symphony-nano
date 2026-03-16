@@ -125,6 +125,19 @@ Symphony is easiest to port when kept in these layers:
 6. `Observability Layer` (logs + optional status surface)
    - Operator visibility into orchestrator and agent behavior.
 
+Implementations should name seam contracts explicitly instead of leaving extension boundaries
+implicit. At minimum, define clear contracts for:
+
+- harness or agent backend adapters
+- tracker adapters
+- skill runtime integration
+- scheduler or timer integration
+- memory backend integration
+- observability surface projection
+
+At least one non-core concern should flow through one of these seams in live runtime behavior so
+the boundary is operational, not only documented.
+
 ### 3.3 External Dependencies
 
 - Issue tracker API (Linear for `tracker.kind: linear` in this specification version).

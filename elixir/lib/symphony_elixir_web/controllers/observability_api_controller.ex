@@ -6,17 +6,17 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
   use Phoenix.Controller, formats: [:json]
 
   alias Plug.Conn
-  alias SymphonyElixirWeb.{Endpoint, Presenter}
-  alias SymphonyElixir.Tracker.Stub
+  alias SymphonyElixir.{ObservabilitySurface, Tracker.Stub}
+  alias SymphonyElixirWeb.Endpoint
 
   @spec state(Conn.t(), map()) :: Conn.t()
   def state(conn, _params) do
-    json(conn, Presenter.state_payload(orchestrator(), snapshot_timeout_ms()))
+    json(conn, ObservabilitySurface.state_payload(orchestrator(), snapshot_timeout_ms()))
   end
 
   @spec issue(Conn.t(), map()) :: Conn.t()
   def issue(conn, %{"issue_identifier" => issue_identifier}) do
-    case Presenter.issue_payload(issue_identifier, orchestrator(), snapshot_timeout_ms()) do
+    case ObservabilitySurface.issue_payload(issue_identifier, orchestrator(), snapshot_timeout_ms()) do
       {:ok, payload} ->
         json(conn, payload)
 
@@ -54,7 +54,7 @@ defmodule SymphonyElixirWeb.ObservabilityApiController do
 
   @spec refresh(Conn.t(), map()) :: Conn.t()
   def refresh(conn, _params) do
-    case Presenter.refresh_payload(orchestrator()) do
+    case ObservabilitySurface.refresh_payload(orchestrator()) do
       {:ok, payload} ->
         conn
         |> put_status(202)
