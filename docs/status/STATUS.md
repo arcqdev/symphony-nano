@@ -16,6 +16,6 @@ Health: green
 3. Record runtime mapping/health in status docs
 
 ## Links
-- Repo: /Users/eddie/dev/arcqdev/symphonyclaw/symphony-nano
+- Repo: `<repo-root>`
 - Prod URL: _(fill)_
 - Dashboard(s): _(fill)_

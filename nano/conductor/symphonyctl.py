@@ -12,7 +12,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 NANO_ROOT = REPO_ROOT / "nano"
-REGISTRY_PATH = NANO_ROOT / "conductor" / "symphony-registry.json"
+LOCAL_CONFIG_DIR = NANO_ROOT / ".local"
+DEFAULT_REGISTRY_PATH = LOCAL_CONFIG_DIR / "symphony-registry.json"
+EXAMPLE_REGISTRY_PATH = NANO_ROOT / "conductor" / "symphony-registry.example.json"
 STATE_DIR = NANO_ROOT / ".runtime"
 BIN_PATH = REPO_ROOT / "elixir" / "bin" / "symphony"
 
@@ -44,7 +46,14 @@ def pid_alive(pid: int) -> bool:
 
 
 def load_registry() -> dict:
-    return json.loads(REGISTRY_PATH.read_text(encoding="utf-8"))
+    return json.loads(registry_path().read_text(encoding="utf-8"))
+
+
+def registry_path() -> Path:
+    override = os.environ.get("SYMPHONY_REGISTRY_PATH")
+    if override:
+        return Path(override).expanduser()
+    return DEFAULT_REGISTRY_PATH
 
 
 def state_path(project: str) -> Path:
@@ -85,7 +94,17 @@ def build_process_env() -> dict[str, str]:
 
 
 def status(project: str) -> int:
-    project_entry = load_project_entry(project)
+    try:
+        project_entry = load_project_entry(project)
+    except FileNotFoundError:
+        print_json({
+            "ok": False,
+            "error": missing_registry_message(),
+            "registryPath": str(registry_path()),
+            "exampleRegistryPath": str(EXAMPLE_REGISTRY_PATH),
+        })
+        return 1
+
     if project_entry is None:
         print_json({"ok": False, "error": f"Unknown project: {project}"})
         return 1
@@ -113,7 +132,17 @@ def status(project: str) -> int:
 
 
 def ensure(project: str) -> int:
-    project_entry = load_project_entry(project)
+    try:
+        project_entry = load_project_entry(project)
+    except FileNotFoundError:
+        print_json({
+            "ok": False,
+            "error": missing_registry_message(),
+            "registryPath": str(registry_path()),
+            "exampleRegistryPath": str(EXAMPLE_REGISTRY_PATH),
+        })
+        return 1
+
     if project_entry is None:
         print_json({"ok": False, "error": f"Unknown project: {project}"})
         return 1
@@ -131,7 +160,7 @@ def ensure(project: str) -> int:
             "ok": False,
             "error": "port missing from registry",
             "workflowPath": str(workflow_path),
-            "registryPath": str(REGISTRY_PATH),
+            "registryPath": str(registry_path()),
         })
         return 1
 
@@ -199,6 +228,14 @@ def stop(project: str) -> int:
 
     print_json({"ok": True, "project": project, "action": "stopped", "pid": pid})
     return 0
+
+
+def missing_registry_message() -> str:
+    return (
+        "Missing registry file. Copy "
+        f"{EXAMPLE_REGISTRY_PATH} to {registry_path()} and fill in your local project paths, "
+        "or set SYMPHONY_REGISTRY_PATH."
+    )
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -19,7 +19,7 @@ Build a dev-team workflow where:
 - `OpenClaw` for intake and lightweight orchestration.
 - `Linear` for durable issue tracking.
 - `Symphony` for autonomous issue pickup and execution.
-- project-local Symphony config/bootstrap files stored in each repo under `~/dev/arcqdev/`
+- project-local Symphony config/bootstrap files stored in each repo under `~/code/`
 
 ### Avoid for v1
 
@@ -88,7 +88,7 @@ Create one `WORKFLOW.md` per project with:
 
 ### Project-local layout
 
-All projects live under `~/dev/arcqdev/`, and Jon already knows the repo locations by project name.
+All projects live under `~/code/`, and the operator already knows the repo locations by project name.
 
 Use that fact directly instead of inventing a detached global config structure.
 
@@ -100,10 +100,10 @@ Recommended pattern:
 
 Example for `littlebrief`:
 
-- repo: `~/dev/arcqdev/littlebrief`
-- workflow file: `~/dev/arcqdev/littlebrief/.symphony/WORKFLOW.md`
-- workspaces root: `~/dev/arcqdev/littlebrief/.symphony/workspaces`
-- logs root: `~/dev/arcqdev/littlebrief/.symphony/log`
+- repo: `~/code/littlebrief`
+- workflow file: `~/code/littlebrief/.symphony/WORKFLOW.md`
+- workspaces root: `~/code/littlebrief/.symphony/workspaces`
+- logs root: `~/code/littlebrief/.symphony/log`
 
 This keeps each Symphony instance obviously tied to the repo Jon already expects.
 
@@ -113,7 +113,7 @@ Jon should start Symphony from a repo-aware wrapper or convention that maps a sp
 
 Expected behavior:
 
-1. resolve project name to repo path under `~/dev/arcqdev/`
+1. resolve project name to repo path under `~/code/`
 2. use the repo-local Symphony workflow file for that project
 3. store workspaces and logs under the same repo's `.symphony/` directory
 4. expose a distinct dashboard port per project
@@ -309,7 +309,7 @@ No LLM call is needed for this path.
 - Run one Symphony instance per project/repo
 - Standardize `WORKFLOW.md` templates
 - Standardize workspace and SQLite bootstrap conventions
-- Standardize a repo-local `.symphony/` layout in every project under `~/dev/arcqdev/`
+- Standardize a repo-local `.symphony/` layout in every project under `~/code/`
 - Add a Jon-facing launcher convention that resolves project names like `littlebrief` to the correct repo path
 
 ## Risks
@@ -341,5 +341,5 @@ No LLM call is needed for this path.
 3. Draft the first project-specific `WORKFLOW.md`.
 4. Define the workspace-local SQLite bootstrap commands for `hooks.after_create`.
 5. Add OpenClaw logic to create/update the Linear issue and poll for completion.
-6. Define the repo-local `.symphony/` folder convention for projects under `~/dev/arcqdev/`.
+6. Define the repo-local `.symphony/` folder convention for projects under `~/code/`.
 7. Give Jon a simple project-name-to-repo startup flow so he can launch the right Symphony instance without confusion.

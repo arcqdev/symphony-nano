@@ -42,7 +42,9 @@ def sample_registry(tmp_root):
             }
         }
     }
-    reg_path = tmp_root / "nano" / "conductor" / "symphony-registry.json"
+    local_dir = tmp_root / "nano" / ".local"
+    local_dir.mkdir(parents=True)
+    reg_path = local_dir / "symphony-registry.json"
     reg_path.write_text(json.dumps(reg), encoding="utf-8")
     return reg_path
 
@@ -51,7 +53,9 @@ def sample_registry(tmp_root):
 def patch_paths(tmp_root, sample_registry):
     with mock.patch.object(symphonyctl, "REPO_ROOT", tmp_root), \
          mock.patch.object(symphonyctl, "NANO_ROOT", tmp_root / "nano"), \
-         mock.patch.object(symphonyctl, "REGISTRY_PATH", sample_registry), \
+         mock.patch.object(symphonyctl, "LOCAL_CONFIG_DIR", tmp_root / "nano" / ".local"), \
+         mock.patch.object(symphonyctl, "DEFAULT_REGISTRY_PATH", sample_registry), \
+         mock.patch.object(symphonyctl, "EXAMPLE_REGISTRY_PATH", tmp_root / "nano" / "conductor" / "symphony-registry.example.json"), \
          mock.patch.object(symphonyctl, "STATE_DIR", tmp_root / "nano" / ".runtime"), \
          mock.patch.object(symphonyctl, "BIN_PATH", tmp_root / "elixir" / "bin" / "symphony"):
         yield
@@ -89,12 +93,27 @@ class TestLoadRegistry:
         assert "testproj" in reg["projects"]
 
     def test_raises_on_missing_file(self, tmp_root):
-        with mock.patch.object(symphonyctl, "REGISTRY_PATH", tmp_root / "nope.json"):
+        with mock.patch.object(symphonyctl, "DEFAULT_REGISTRY_PATH", tmp_root / "nope.json"):
             with pytest.raises(FileNotFoundError):
                 symphonyctl.load_registry()
 
+    def test_uses_env_override(self, patch_paths, tmp_root):
+        override = tmp_root / "custom-registry.json"
+        override.write_text(json.dumps({"projects": {}}), encoding="utf-8")
+
+        with mock.patch.dict(os.environ, {"SYMPHONY_REGISTRY_PATH": str(override)}):
+            assert symphonyctl.registry_path() == override
+
 
 class TestStatus:
+    def test_missing_registry(self, patch_paths, tmp_root, capsys):
+        with mock.patch.object(symphonyctl, "DEFAULT_REGISTRY_PATH", tmp_root / "missing.json"):
+            rc = symphonyctl.status("testproj")
+        assert rc == 1
+        out = json.loads(capsys.readouterr().out)
+        assert out["ok"] is False
+        assert "Missing registry file" in out["error"]
+
     def test_unknown_project(self, patch_paths, capsys):
         rc = symphonyctl.status("nonexistent")
         assert rc == 1
@@ -139,6 +158,13 @@ class TestStop:
 
 
 class TestEnsure:
+    def test_missing_registry(self, patch_paths, tmp_root, capsys):
+        with mock.patch.object(symphonyctl, "DEFAULT_REGISTRY_PATH", tmp_root / "missing.json"):
+            rc = symphonyctl.ensure("testproj")
+        assert rc == 1
+        out = json.loads(capsys.readouterr().out)
+        assert "Missing registry file" in out["error"]
+
     def test_unknown_project(self, patch_paths, capsys):
         rc = symphonyctl.ensure("nonexistent")
         assert rc == 1

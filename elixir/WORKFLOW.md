@@ -1,7 +1,7 @@
 ---
 tracker:
   kind: linear
-  project_slug: "symphonyclaw"
+  project_slug: "142cade597e7"
   active_states:
     - Todo
     - In Progress
@@ -42,9 +42,9 @@ codex:
   model: gpt-5.3-codex-spark
   reasoning_effort: medium
   approval_policy: never
-  thread_sandbox: workspace-write
+  thread_sandbox: danger-full-access
   turn_sandbox_policy:
-    type: workspaceWrite
+    type: dangerFullAccess
 acp:
   backends:
     claude-code:

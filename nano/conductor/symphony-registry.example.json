@@ -1,0 +1,10 @@
+{
+  "projects": {
+    "example-project": {
+      "repoPath": "/absolute/path/to/project",
+      "workflowPath": "/absolute/path/to/project/.symphony/WORKFLOW.md",
+      "projectSlug": "replace-with-linear-project-slug",
+      "port": 45123
+    }
+  }
+}

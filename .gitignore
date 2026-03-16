@@ -1,6 +1,7 @@
+.DS_Store
+.local/
 .runtime/
-__pycache__/
-*.pyc
-.pytest_cache/
-**/node_modules
-**/bin
+nano/.local/
+nano/.runtime/
+nano/plugins/acp-claude/bin/
+nano/plugins/acp-claude/node_modules/

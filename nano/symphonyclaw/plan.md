@@ -513,8 +513,8 @@ token_env = "DISCORD_BOT_TOKEN"
 
 [[teams]]
 slug = "core-platform"
-repo_path = "/Users/eddie/dev/arcqdev/symphonyclaw"
-workflow_path = "/Users/eddie/dev/arcqdev/symphonyclaw/.symphony/WORKFLOW.md"
+repo_path = "/absolute/path/to/symphonyclaw"
+workflow_path = "/absolute/path/to/symphonyclaw/.symphony/WORKFLOW.md"
 linear_project_slug = "replace-me"
 dashboard_port = 46110
 default_backend = "codex"
