@@ -5,7 +5,6 @@ tracker:
   active_states:
     - Todo
     - In Progress
-    - Merging
     - Rework
   terminal_states:
     - Closed
@@ -32,7 +31,7 @@ agent:
     reviewer-engineer: claude-code
   stage_models:
     implementer-engineer: gpt-5.4
-    reviewer-engineer: claude-sonnet-4-6
+    reviewer-engineer: sonnet
   stage_reasoning_efforts:
     implementer-engineer: medium
   max_concurrent_agents: 10
@@ -49,7 +48,9 @@ acp:
   backends:
     claude-code:
       command: claude-agent-acp
-      model: claude-sonnet-4-6
+      env:
+        CLAUDE_CODE_EXECUTABLE: ~/.local/bin/claude
+      model: sonnet
 server:
   port: 45129
 ---
@@ -97,7 +98,7 @@ This workflow expects every active engineering ticket to carry both of these Lin
 Symphony uses those labels for stage routing:
 
 - `implementer-engineer` runs first on Codex using `gpt-5.4` with `medium` reasoning effort
-- `reviewer-engineer` runs second on Claude Code using `claude-sonnet-4-6`
+- `reviewer-engineer` runs second on Claude Code using `sonnet`
 
 If those labels are missing, record the workflow drift in the workpad immediately. Do not silently
 pretend the staged review pass happened.
@@ -137,16 +138,16 @@ When stage routing is active, follow these role contracts strictly.
 - Run the relevant tests and validation for the touched scope before ending the stage.
 - Do not leave the repo in a knowingly red state for the touched scope.
 - Update the workpad so the reviewer can quickly verify what changed, what was tested, and what still deserves extra scrutiny.
-- Do not move the issue to `Human Review` from this stage unless the reviewer stage has already run in the same routed execution.
+- Do not move the issue to `BLOCKED - requires human` from this stage unless a true external blocker remains after exhausting in-session fallbacks.
 
 ### `reviewer-engineer`
 
 - Act as a skeptical reviewer-engineer, not a passive summarizer.
 - Read the workpad and inspect the actual diff and touched files before trusting prior validation claims.
-- Run the full validation suite for the repo or affected umbrella project, including all tests that should pass before human review.
+- Run the full validation suite for the repo or affected umbrella project, including all tests required before landing to `main`.
 - Do a quick but real scrutiny pass on correctness, regressions, edge cases, and whether the implementation actually matches the ticket.
 - If anything is wrong or suspicious, fix it directly instead of merely commenting on it, then rerun the full validation suite.
-- Only hand off to `Human Review` when the code looks correct and the full validation sweep is green.
+- When the code looks correct and the full validation sweep is green, push directly to `origin/main` and move the issue to `Done`.
 
 ## Related skills
 
@@ -154,16 +155,13 @@ When stage routing is active, follow these role contracts strictly.
 - `commit`: produce clean, logical commits during implementation.
 - `push`: keep remote branch current and publish updates.
 - `pull`: keep branch updated with latest `origin/main` before handoff.
-- `land`: when ticket reaches `Merging`, explicitly open and follow `.codex/skills/land/SKILL.md`, which includes the `land` loop.
 
 ## Status map
 
 - `Backlog` -> out of scope for this workflow; do not modify.
 - `Todo` -> queued; immediately transition to `In Progress` before active work.
-  - Special case: if a PR is already attached, treat as feedback/rework loop (run full PR feedback sweep, address or explicitly push back, revalidate, return to `Human Review`).
 - `In Progress` -> implementation actively underway.
-- `Human Review` -> PR is attached and validated; waiting on human approval.
-- `Merging` -> approved by human; execute the `land` skill flow (do not call `gh pr merge` directly).
+- `BLOCKED - requires human` -> autonomous progress is blocked by a true missing tool/auth/permission/decision and requires human intervention.
 - `Rework` -> reviewer requested changes; planning + implementation required.
 - `Done` -> terminal state; no further action required.
 
@@ -174,10 +172,8 @@ When stage routing is active, follow these role contracts strictly.
 3. Route to the matching flow:
    - `Backlog` -> do not modify issue content/state; stop and wait for human to move it to `Todo`.
    - `Todo` -> immediately move to `In Progress`, then ensure bootstrap workpad comment exists (create if missing), then start execution flow.
-     - If PR is already attached, start by reviewing all open PR comments and deciding required changes vs explicit pushback responses.
    - `In Progress` -> continue execution flow from current scratchpad comment.
-   - `Human Review` -> wait and poll for decision/review updates.
-   - `Merging` -> on entry, open and follow `.codex/skills/land/SKILL.md`; do not call `gh pr merge` directly.
+   - `BLOCKED - requires human` -> stop and wait for a human to unblock the issue or move it back into an active state.
    - `Rework` -> run rework flow.
    - `Done` -> do nothing and shut down.
 4. Check whether a PR already exists for the current branch and whether it is closed.
@@ -220,35 +216,28 @@ When stage routing is active, follow these role contracts strictly.
       - resulting `HEAD` short SHA.
 10. Compact context and proceed to execution.
 
-## PR feedback sweep protocol (required)
+## Mainline landing protocol (required)
 
-When a ticket has an attached PR, run this protocol before moving to `Human Review`:
+Normal success means landing directly on `origin/main` and moving the issue to `Done`.
 
-1. Identify the PR number from issue links/attachments.
-2. Gather feedback from all channels:
-   - Top-level PR comments (`gh pr view --comments`).
-   - Inline review comments (`gh api repos/<owner>/<repo>/pulls/<pr>/comments`).
-   - Review summaries/states (`gh pr view --json reviews`).
-3. Treat every actionable reviewer comment (human or bot), including inline review comments, as blocking until one of these is true:
-   - code/test/docs updated to address it, or
-   - explicit, justified pushback reply is posted on that thread.
-4. Update the workpad plan/checklist to include each feedback item and its resolution status.
-5. Re-run validation after feedback-driven changes and push updates.
-6. Repeat this sweep until there are no outstanding actionable comments.
+1. Commit cleanly once the current stage work is validated.
+2. Push directly to `origin/main`.
+3. Re-run any post-push validation needed for confidence when the repo supports it.
+4. Record the pushed commit SHA and validation evidence in the workpad.
 
 ## Blocked-access escape hatch (required behavior)
 
 Use this only when completion is blocked by missing required tools or missing auth/permissions that cannot be resolved in-session.
 
-- GitHub is **not** a valid blocker by default. Always try fallback strategies first (alternate remote/auth mode, then continue publish/review flow).
-- Do not move to `Human Review` for GitHub access/auth until all fallback strategies have been attempted and documented in the workpad.
-- If a non-GitHub required tool is missing, or required non-GitHub auth is unavailable, move the ticket to `Human Review` with a short blocker brief in the workpad that includes:
+- GitHub is **not** a valid blocker by default. Always try fallback strategies first (alternate remote/auth mode, then continue the direct-to-main flow).
+- Do not move to `BLOCKED - requires human` for GitHub access/auth until all fallback strategies have been attempted and documented in the workpad.
+- If a non-GitHub required tool is missing, or required non-GitHub auth is unavailable, move the ticket to `BLOCKED - requires human` with a short blocker brief in the workpad that includes:
   - what is missing,
   - why it blocks required acceptance/validation,
   - exact human action needed to unblock.
 - Keep the brief concise and action-oriented; do not add extra top-level comments outside the workpad.
 
-## Step 2: Execution phase (Todo -> In Progress -> Human Review)
+## Step 2: Execution phase (Todo -> In Progress -> Done)
 
 1.  Determine current repo state (`branch`, `git status`, `HEAD`) and verify the kickoff `pull` sync result is already recorded in the workpad before implementation continues.
 2.  If current issue state is `Todo`, move it to `In Progress`; otherwise leave the current state unchanged.
@@ -260,49 +249,33 @@ Use this only when completion is blocked by missing required tools or missing au
     - Keep parent/child structure intact as scope evolves.
     - Update the workpad immediately after each meaningful milestone (for example: reproduction complete, code change landed, validation run, review feedback addressed).
     - Never leave completed work unchecked in the plan.
-    - For tickets that started as `Todo` with an attached PR, run the full PR feedback sweep protocol immediately after kickoff and before new feature work.
 5.  Run validation/tests required for the scope.
     - Mandatory gate: execute all ticket-provided `Validation`/`Test Plan`/ `Testing` requirements when present; treat unmet items as incomplete work.
     - If current routed stage is `implementer-engineer`, run the relevant tests/checks for the touched scope and make sure they pass before ending the stage.
-    - If current routed stage is `reviewer-engineer`, run the full project validation sweep, including all tests required for human-review readiness, and keep fixing issues until that sweep is green.
+    - If current routed stage is `reviewer-engineer`, run the full project validation sweep, including all tests required before landing to `main`, and keep fixing issues until that sweep is green.
     - Prefer a targeted proof that directly demonstrates the behavior you changed.
     - You may make temporary local proof edits to validate assumptions (for example: tweak a local build input for `make`, or hardcode a UI account / response path) when this increases confidence.
     - Revert every temporary proof edit before commit/push.
     - Document these temporary proof steps and outcomes in the workpad `Validation`/`Notes` sections so reviewers can follow the evidence.
     - If app-touching, run `launch-app` validation and capture/upload media via `github-pr-media` before handoff.
 6.  Re-check all acceptance criteria and close any gaps.
-7.  Before every `git push` attempt, run the required validation for your scope and confirm it passes; if it fails, address issues and rerun until green, then commit and push changes.
-8.  Attach PR URL to the issue (prefer attachment; use the workpad comment only if attachment is unavailable).
-    - Ensure the GitHub PR has label `symphony` (add it if missing).
-9.  Merge latest `origin/main` into branch, resolve conflicts, and rerun checks.
-10. Update the workpad comment with final checklist status and validation notes.
+7.  Before every `git push origin main` attempt, run the required validation for your scope and confirm it passes; if it fails, address issues and rerun until green, then commit and push.
+8.  Update local `main` from `origin/main` before the final push, resolve conflicts locally if needed, and rerun checks when conflicts touched validated scope.
+9.  Push the validated result directly to `origin/main`.
+10. Update the workpad comment with final checklist status, validation notes, and the pushed commit SHA.
     - Mark completed plan/acceptance/validation checklist items as checked.
     - Add final handoff notes (commit + validation summary) in the same workpad comment.
-    - Do not include PR URL in the workpad comment; keep PR linkage on the issue via attachment/link fields.
     - Add a short `### Confusions` section at the bottom when any part of task execution was unclear/confusing, with concise bullets.
     - Do not post any additional completion summary comment.
-11. Before moving to `Human Review`, poll PR feedback and checks:
-    - Read the PR `Manual QA Plan` comment (when present) and use it to sharpen UI/runtime test coverage for the current change.
-    - Run the full PR feedback sweep protocol.
-    - Confirm PR checks are passing (green) after the latest changes.
-    - Confirm every required ticket-provided validation/test-plan item is explicitly marked complete in the workpad.
-    - Repeat this check-address-verify loop until no outstanding comments remain and checks are fully passing.
-    - Re-open and refresh the workpad before state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
-12. Only then move issue to `Human Review`.
-    - Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move to `Human Review` with the blocker brief and explicit unblock actions.
-13. For `Todo` tickets that already had a PR attached at kickoff:
-    - Ensure all existing PR feedback was reviewed and resolved, including inline review comments (code changes or explicit, justified pushback response).
-    - Ensure branch was pushed with any required updates.
-    - Then move to `Human Review`.
+11. Re-open and refresh the workpad before the final state transition so `Plan`, `Acceptance Criteria`, and `Validation` exactly match completed work.
+12. Move the issue to `Done`.
+13. Exception: if blocked by missing required non-GitHub tools/auth per the blocked-access escape hatch, move the issue to `BLOCKED - requires human` with the blocker brief and explicit unblock actions.
 
-## Step 3: Human Review and merge handling
+## Step 3: Blocked handling
 
-1. When the issue is in `Human Review`, do not code or change ticket content.
-2. Poll for updates as needed, including GitHub PR review comments from humans and bots.
-3. If review feedback requires changes, move the issue to `Rework` and follow the rework flow.
-4. If approved, human moves the issue to `Merging`.
-5. When the issue is in `Merging`, open and follow `.codex/skills/land/SKILL.md`, then run the `land` skill in a loop until the PR is merged. Do not call `gh pr merge` directly.
-6. After merge is complete, move the issue to `Done`.
+1. `BLOCKED - requires human` is reserved for true external blockers only.
+2. When an issue is in `BLOCKED - requires human`, do not keep retrying speculative work.
+3. Wait for a human to unblock the missing auth/tool/decision or move the issue back to an active state.
 
 ## Step 4: Rework handling
 
@@ -316,15 +289,13 @@ Use this only when completion is blocked by missing required tools or missing au
    - Create a new bootstrap `## Codex Workpad` comment.
    - Build a fresh plan/checklist and execute end-to-end.
 
-## Completion bar before Human Review
+## Completion bar before Done
 
 - Step 1/2 checklist is fully complete and accurately reflected in the single workpad comment.
 - Acceptance criteria and required ticket-provided validation items are complete.
 - Validation/tests are green for the latest commit.
-- If routed through `reviewer-engineer`, the reviewer pass has inspected the diff, run the full validation sweep, and fixed any discovered issues before handoff.
-- PR feedback sweep is complete and no actionable comments remain.
-- PR checks are green, branch is pushed, and PR is linked on the issue.
-- Required PR metadata is present (`symphony` label).
+- If routed through `reviewer-engineer`, the reviewer pass has inspected the diff, run the full validation sweep, and fixed any discovered issues before landing.
+- The validated commit is pushed to `origin/main`.
 - If app-touching, runtime validation/media requirements from `App runtime validation (required)` are complete.
 
 ## Guardrails
@@ -341,8 +312,9 @@ Use this only when completion is blocked by missing required tools or missing au
   title/description/acceptance criteria, same-project assignment, a `related`
   link to the current issue, and `blockedBy` when the follow-up depends on the
   current issue.
-- Do not move to `Human Review` unless the `Completion bar before Human Review` is satisfied.
-- In `Human Review`, do not make changes; wait and poll.
+- Do not move to `BLOCKED - requires human` unless a real external blocker remains unresolved in-session.
+- Do not move to `Done` unless the `Completion bar before Done` is satisfied.
+- In `BLOCKED - requires human`, do not make changes; wait for an unblock signal.
 - If state is terminal (`Done`), do nothing and shut down.
 - Keep issue text concise, specific, and reviewer-oriented.
 - If blocked and no workpad exists yet, add one blocker comment describing blocker, impact, and next unblock action.

@@ -45,7 +45,8 @@ Build a dev-team workflow where:
    - UI/design failure -> frontend
    - API/data failure -> backend
    - wiring/integration failure -> full-stack
-6. When the issue reaches a terminal Linear state, OpenClaw treats the run as complete.
+6. When the issue reaches `Done`, OpenClaw treats the run as complete.
+7. `BLOCKED - requires human` is a failure-to-proceed state, not a review queue.
 
 ### Parallelism
 
@@ -60,8 +61,7 @@ Build a dev-team workflow where:
 - Configure the expected workflow states on the relevant Linear team:
   - `Todo`
   - `In Progress`
-  - `Human Review`
-  - `Merging`
+  - `BLOCKED - requires human`
   - `Rework`
   - `Done`
   - `Cancelled` or `Canceled`

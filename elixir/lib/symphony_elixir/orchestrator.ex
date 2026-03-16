@@ -14,7 +14,7 @@ defmodule SymphonyElixir.Orchestrator do
   @failure_retry_base_ms 10_000
   @max_retry_attempts 2
   @max_no_progress_runs 3
-  @human_review_state "Human Review"
+  @human_review_state "BLOCKED - requires human"
   @fatal_error_signals [
     "permission denied",
     "authentication",

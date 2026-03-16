@@ -42,7 +42,7 @@ Symphony stops the active agent for that issue and cleans up matching workspaces
    - To get your project's slug, right-click the project and copy its URL. The slug is part of the
      URL.
    - When creating a workflow based on this repo, note that it depends on non-standard Linear
-     issue statuses: "Rework", "Human Review", and "Merging". You can customize them in
+     issue statuses: "Rework" and "BLOCKED - requires human". You can customize them in
      Team Settings → Workflow in Linear.
 6. Follow the instructions below to install the required runtime dependencies and start the service.
 
@@ -111,6 +111,8 @@ acp:
   backends:
     claude-code:
       command: claude-agent-acp
+      env:
+        CLAUDE_CODE_EXECUTABLE: ~/.local/bin/claude
 ---
 
 You are working on a Linear issue {{ issue.identifier }}.
@@ -129,6 +131,9 @@ Notes:
 - `agent.stage_reasoning_efforts` optionally overrides Codex reasoning effort per routed stage.
 - Symphony ships with a default ACP backend entry for `claude-code` using
   `claude-agent-acp`.
+- When using Claude Code through ACP, set
+  `acp.backends.claude-code.env.CLAUDE_CODE_EXECUTABLE: ~/.local/bin/claude` so
+  `claude-agent-acp` launches the authenticated local Claude CLI binary.
 - Safer Codex defaults are used when policy fields are omitted:
   - `codex.approval_policy` defaults to `{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}`
   - `codex.thread_sandbox` defaults to `workspace-write`
@@ -154,7 +159,7 @@ Notes:
   invocation when a turn completes normally but the issue is still in an active state. Default: `20`.
 - `agent.max_input_tokens` and `agent.max_output_tokens` set cumulative token budgets per issue
   across all turns and retries. When either limit is exceeded mid-turn, the agent process is killed
-  immediately, the issue is moved to `Human Review`, and a Linear comment is posted with the
+  immediately, the issue is moved to `BLOCKED - requires human`, and a Linear comment is posted with the
   budget details. Defaults: `4000000` input, `400000` output. Set to `null` to disable either cap.
 - If the Markdown body is blank, Symphony uses a default prompt template that includes the issue
   identifier, title, and body.
@@ -190,6 +195,7 @@ acp:
     claude-code:
       command: "$CLAUDE_ACP_BIN"
       env:
+        CLAUDE_CODE_EXECUTABLE: ~/.local/bin/claude
         ANTHROPIC_CONFIG_DIR: $ANTHROPIC_CONFIG_DIR
 ```
 
