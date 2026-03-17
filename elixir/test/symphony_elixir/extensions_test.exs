@@ -27,6 +27,19 @@ defmodule SymphonyElixir.ExtensionsTest do
       {:ok, issue_ids}
     end
 
+    def project_summary do
+      Application.get_env(
+        :symphony_elixir,
+        {__MODULE__, :project_summary},
+        %{
+          kind: "linear",
+          slug: "project",
+          name: "Project",
+          url: "https://linear.app/project/project/issues"
+        }
+      )
+    end
+
     def graphql(query, variables) do
       send(self(), {:graphql_called, query, variables})
 
@@ -81,12 +94,19 @@ defmodule SymphonyElixir.ExtensionsTest do
 
   setup do
     linear_client_module = Application.get_env(:symphony_elixir, :linear_client_module)
+    fake_project_summary = Application.get_env(:symphony_elixir, {FakeLinearClient, :project_summary})
 
     on_exit(fn ->
       if is_nil(linear_client_module) do
         Application.delete_env(:symphony_elixir, :linear_client_module)
       else
         Application.put_env(:symphony_elixir, :linear_client_module, linear_client_module)
+      end
+
+      if is_nil(fake_project_summary) do
+        Application.delete_env(:symphony_elixir, {FakeLinearClient, :project_summary})
+      else
+        Application.put_env(:symphony_elixir, {FakeLinearClient, :project_summary}, fake_project_summary)
       end
     end)
 
@@ -194,6 +214,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_candidate_issues()
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issues_by_states([" in progress ", 42])
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issue_states_by_ids(["issue-1"])
+    assert SymphonyElixir.Tracker.project_summary() == %{kind: "memory", slug: "project", name: nil, url: nil}
     assert :ok = SymphonyElixir.Tracker.create_comment("issue-1", "comment")
     assert :ok = SymphonyElixir.Tracker.update_issue_state("issue-1", "Done")
     assert_receive {:memory_tracker_comment, "issue-1", "comment"}
@@ -244,6 +265,17 @@ defmodule SymphonyElixir.ExtensionsTest do
   test "linear adapter delegates reads and validates mutation responses" do
     Application.put_env(:symphony_elixir, :linear_client_module, FakeLinearClient)
 
+    Application.put_env(
+      :symphony_elixir,
+      {FakeLinearClient, :project_summary},
+      %{
+        kind: "linear",
+        slug: "project",
+        name: "Core Runtime",
+        url: "https://linear.app/project/project/issues"
+      }
+    )
+
     assert {:ok, [:candidate]} = Adapter.fetch_candidate_issues()
     assert_receive :fetch_candidate_issues_called
 
@@ -252,6 +284,13 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert {:ok, ["issue-1"]} = Adapter.fetch_issue_states_by_ids(["issue-1"])
     assert_receive {:fetch_issue_states_by_ids_called, ["issue-1"]}
+
+    assert Adapter.project_summary() == %{
+             kind: "linear",
+             slug: "project",
+             name: "Core Runtime",
+             url: "https://linear.app/project/project/issues"
+           }
 
     Process.put(
       {FakeLinearClient, :graphql_result},
@@ -358,6 +397,18 @@ defmodule SymphonyElixir.ExtensionsTest do
   test "phoenix observability api preserves state, issue, and refresh responses" do
     snapshot = static_snapshot()
     orchestrator_name = Module.concat(__MODULE__, :ObservabilityApiOrchestrator)
+    Application.put_env(:symphony_elixir, :linear_client_module, FakeLinearClient)
+
+    Application.put_env(
+      :symphony_elixir,
+      {FakeLinearClient, :project_summary},
+      %{
+        kind: "linear",
+        slug: "project",
+        name: "Symphony Core",
+        url: "https://linear.app/project/project/issues"
+      }
+    )
 
     {:ok, _pid} =
       StaticOrchestrator.start_link(
@@ -378,6 +429,14 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert state_payload == %{
              "generated_at" => state_payload["generated_at"],
+             "tracker" => %{
+               "kind" => "linear",
+               "project" => %{
+                 "name" => "Symphony Core",
+                 "slug" => "project",
+                 "url" => "https://linear.app/project/project/issues"
+               }
+             },
              "counts" => %{"running" => 1, "retrying" => 1},
              "running" => [
                %{
@@ -560,6 +619,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
   test "dashboard bootstraps liveview from embedded static assets" do
     orchestrator_name = Module.concat(__MODULE__, :AssetOrchestrator)
+    Application.put_env(:symphony_elixir, :linear_client_module, FakeLinearClient)
 
     {:ok, _pid} =
       StaticOrchestrator.start_link(
@@ -604,6 +664,18 @@ defmodule SymphonyElixir.ExtensionsTest do
   test "dashboard liveview renders and refreshes over pubsub" do
     orchestrator_name = Module.concat(__MODULE__, :DashboardOrchestrator)
     snapshot = static_snapshot()
+    Application.put_env(:symphony_elixir, :linear_client_module, FakeLinearClient)
+
+    Application.put_env(
+      :symphony_elixir,
+      {FakeLinearClient, :project_summary},
+      %{
+        kind: "linear",
+        slug: "project",
+        name: "Symphony Core",
+        url: "https://linear.app/project/project/issues"
+      }
+    )
 
     {:ok, orchestrator_pid} =
       StaticOrchestrator.start_link(
@@ -627,6 +699,8 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Runtime"
     assert html =~ "Live"
     assert html =~ "Offline"
+    assert html =~ "Linear project"
+    assert html =~ "Symphony Core"
     assert html =~ "Copy ID"
     assert html =~ "Codex update"
     refute html =~ "data-runtime-clock="
@@ -698,6 +772,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     snapshot = static_snapshot()
     orchestrator_name = Module.concat(__MODULE__, :BoundPortOrchestrator)
+    Application.put_env(:symphony_elixir, :linear_client_module, FakeLinearClient)
 
     refresh = %{
       queued: true,

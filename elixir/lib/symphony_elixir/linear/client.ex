@@ -312,28 +312,33 @@ defmodule SymphonyElixir.Linear.Client do
     end
   end
 
-  defp fetch_project_summary(project_slug, _graphql_fun)
-       when not is_binary(project_slug) or byte_size(String.trim(project_slug)) == 0 do
+  defp fetch_project_summary(project_slug, _graphql_fun) when not is_binary(project_slug) do
     {:error, :missing_linear_project_slug}
   end
 
   defp fetch_project_summary(project_slug, graphql_fun) when is_function(graphql_fun, 2) do
-    case graphql_fun.(@project_summary_query, %{projectSlug: project_slug}) do
-      {:ok,
-       %{
-         "data" => %{
-           "projects" => %{
-             "nodes" => [%{} = project | _]
-           }
-         }
-       }} ->
-        {:ok, normalize_project_summary(project, project_slug)}
+    case String.trim(project_slug) do
+      "" ->
+        {:error, :missing_linear_project_slug}
 
-      {:ok, _body} ->
-        {:error, :missing_linear_project}
+      trimmed_slug ->
+        case graphql_fun.(@project_summary_query, %{projectSlug: trimmed_slug}) do
+          {:ok,
+           %{
+             "data" => %{
+               "projects" => %{
+                 "nodes" => [%{} = project | _]
+               }
+             }
+           }} ->
+            {:ok, normalize_project_summary(project, trimmed_slug)}
 
-      {:error, reason} ->
-        {:error, reason}
+          {:ok, _body} ->
+            {:error, :missing_linear_project}
+
+          {:error, reason} ->
+            {:error, reason}
+        end
     end
   end
 

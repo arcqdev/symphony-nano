@@ -46,6 +46,7 @@ defmodule SymphonyElixir.TestSupport do
           Application.delete_env(:symphony_elixir, :stub_tracker_issues)
           Application.delete_env(:symphony_elixir, :stub_tracker_issue_comments)
           Application.delete_env(:symphony_elixir, :stub_tracker_recipient)
+          Application.delete_env(:symphony_elixir, {SymphonyElixir.Linear.Client, :project_summary_cache})
           File.rm_rf(workflow_root)
         end)
 

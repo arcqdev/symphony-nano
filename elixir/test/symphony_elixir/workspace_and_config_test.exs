@@ -426,6 +426,50 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     assert_receive {:fetch_issue_states_page, ^query, %{ids: ^second_batch_ids, first: 5, relationFirst: 50}}
   end
 
+  test "linear client projects expose project summary details" do
+    graphql_fun = fn query, variables ->
+      send(self(), {:project_summary_query, query, variables})
+
+      {:ok,
+       %{
+         "data" => %{
+           "projects" => %{
+             "nodes" => [
+               %{
+                 "name" => "Symphony Core",
+                 "slugId" => "project",
+                 "url" => "https://linear.app/project/project/issues"
+               }
+             ]
+           }
+         }
+       }}
+    end
+
+    assert Client.project_summary_for_test("project", graphql_fun) == %{
+             kind: "linear",
+             slug: "project",
+             name: "Symphony Core",
+             url: "https://linear.app/project/project/issues"
+           }
+
+    assert_receive {:project_summary_query, query, %{projectSlug: "project"}}
+    assert query =~ "SymphonyLinearProjectSummary"
+  end
+
+  test "linear client project summary falls back to configured project url when lookup fails" do
+    graphql_fun = fn _query, _variables ->
+      {:error, :timeout}
+    end
+
+    assert Client.project_summary_for_test("project", graphql_fun) == %{
+             kind: "linear",
+             slug: "project",
+             name: nil,
+             url: "https://linear.app/project/project/issues"
+           }
+  end
+
   test "linear client logs response bodies for non-200 graphql responses" do
     log =
       ExUnit.CaptureLog.capture_log(fn ->
