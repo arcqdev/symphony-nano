@@ -40,6 +40,16 @@ defmodule SymphonyElixir.Tracker.Stub do
      |> Enum.filter(fn %Issue{id: id} -> MapSet.member?(requested_ids, id) end)}
   end
 
+  @spec project_summary() :: map()
+  def project_summary do
+    %{
+      kind: "stub",
+      slug: Config.settings!().tracker.project_slug,
+      name: "Stub",
+      url: nil
+    }
+  end
+
   @spec create_comment(String.t(), String.t()) :: :ok | {:error, term()}
   def create_comment(issue_id, body) when is_binary(issue_id) and is_binary(body) do
     comments = Application.get_env(:symphony_elixir, @comment_key, %{})

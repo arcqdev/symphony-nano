@@ -11,6 +11,7 @@ defmodule SymphonyElixir.Orchestrator.State do
   }
 
   defstruct [
+    :scheduler,
     :poll_interval_ms,
     :max_concurrent_agents,
     :next_poll_due_at_ms,
@@ -30,9 +31,11 @@ defmodule SymphonyElixir.Orchestrator.State do
 
   @type t :: %__MODULE__{}
 
-  @spec new(map(), integer()) :: t()
-  def new(config, now_ms) when is_map(config) and is_integer(now_ms) do
+  @spec new(map(), integer(), module()) :: t()
+  def new(config, now_ms, scheduler)
+      when is_map(config) and is_integer(now_ms) and is_atom(scheduler) do
     %__MODULE__{
+      scheduler: scheduler,
       poll_interval_ms: config.polling.interval_ms,
       max_concurrent_agents: config.agent.max_concurrent_agents,
       next_poll_due_at_ms: now_ms,

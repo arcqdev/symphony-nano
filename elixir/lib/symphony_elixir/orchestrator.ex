@@ -6,7 +6,7 @@ defmodule SymphonyElixir.Orchestrator do
   use GenServer
   require Logger
 
-  alias SymphonyElixir.{Config, StatusDashboard, Tracker}
+  alias SymphonyElixir.{Config, Scheduler, StatusDashboard, Tracker}
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Orchestrator.{CodexTracking, Dispatch, Runtime, State}
 
@@ -20,10 +20,11 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   @impl true
-  def init(_opts) do
-    now_ms = System.monotonic_time(:millisecond)
+  def init(opts) do
+    scheduler = Keyword.get(opts, :scheduler, SymphonyElixir.Scheduler.System)
+    now_ms = Scheduler.monotonic_time(scheduler, :millisecond)
     config = Config.settings!()
-    state = State.new(config, now_ms)
+    state = State.new(config, now_ms, scheduler)
     :ok = Runtime.run_terminal_workspace_cleanup()
     state = schedule_tick(state, 0)
     {:ok, state}
@@ -43,7 +44,7 @@ defmodule SymphonyElixir.Orchestrator do
     }
 
     notify_dashboard()
-    :ok = schedule_poll_cycle_start()
+    :ok = schedule_poll_cycle_start(state)
     {:noreply, state}
   end
 
@@ -61,7 +62,7 @@ defmodule SymphonyElixir.Orchestrator do
     }
 
     notify_dashboard()
-    :ok = schedule_poll_cycle_start()
+    :ok = schedule_poll_cycle_start(state)
     {:noreply, state}
   end
 
@@ -563,7 +564,7 @@ defmodule SymphonyElixir.Orchestrator do
   def handle_call(:snapshot, _from, state) do
     state = refresh_runtime_config(state)
     now = DateTime.utc_now()
-    now_ms = System.monotonic_time(:millisecond)
+    now_ms = Scheduler.monotonic_time(scheduler_adapter(state), :millisecond)
 
     running =
       state.running
@@ -619,7 +620,7 @@ defmodule SymphonyElixir.Orchestrator do
   end
 
   def handle_call(:request_refresh, _from, state) do
-    now_ms = System.monotonic_time(:millisecond)
+    now_ms = Scheduler.monotonic_time(scheduler_adapter(state), :millisecond)
     already_due? = is_integer(state.next_poll_due_at_ms) and state.next_poll_due_at_ms <= now_ms
     coalesced = state.poll_check_in_progress == true or already_due?
     state = if coalesced, do: state, else: schedule_tick(state, 0)
@@ -635,24 +636,38 @@ defmodule SymphonyElixir.Orchestrator do
 
   defp schedule_tick(%State{} = state, delay_ms) when is_integer(delay_ms) and delay_ms >= 0 do
     if is_reference(state.tick_timer_ref) do
-      Process.cancel_timer(state.tick_timer_ref)
+      Scheduler.cancel_timer(scheduler_adapter(state), state.tick_timer_ref)
     end
 
     tick_token = make_ref()
-    timer_ref = Process.send_after(self(), {:tick, tick_token}, delay_ms)
+
+    timer_ref =
+      Scheduler.send_after(scheduler_adapter(state), self(), {:tick, tick_token}, delay_ms)
 
     %{
       state
       | tick_timer_ref: timer_ref,
         tick_token: tick_token,
-        next_poll_due_at_ms: System.monotonic_time(:millisecond) + delay_ms
+        next_poll_due_at_ms: Scheduler.monotonic_time(scheduler_adapter(state), :millisecond) + delay_ms
     }
   end
 
-  defp schedule_poll_cycle_start do
-    :timer.send_after(@poll_transition_render_delay_ms, self(), :run_poll_cycle)
+  defp schedule_poll_cycle_start(%State{} = state) do
+    Scheduler.send_after(
+      scheduler_adapter(state),
+      self(),
+      :run_poll_cycle,
+      @poll_transition_render_delay_ms
+    )
+
     :ok
   end
+
+  defp scheduler_adapter(state) when is_map(state) do
+    Map.get(state, :scheduler) || SymphonyElixir.Scheduler.System
+  end
+
+  defp scheduler_adapter(_), do: SymphonyElixir.Scheduler.System
 
   defp next_poll_in_ms(nil, _now_ms), do: nil
 

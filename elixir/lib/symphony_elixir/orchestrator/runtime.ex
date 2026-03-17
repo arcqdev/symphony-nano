@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Orchestrator.Runtime do
   require Logger
   import Bitwise, only: [<<<: 2]
 
-  alias SymphonyElixir.{Config, Tracker, Workspace}
+  alias SymphonyElixir.{Config, Scheduler, Tracker, Workspace}
   alias SymphonyElixir.Linear.Issue
   alias SymphonyElixir.Orchestrator.{CodexTracking, Dispatch, State}
 
@@ -25,9 +25,7 @@ defmodule SymphonyElixir.Orchestrator.Runtime do
         end)
 
       {:error, reason} ->
-        Logger.warning(
-          "Skipping startup terminal workspace cleanup; failed to fetch terminal issues: #{inspect(reason)}"
-        )
+        Logger.warning("Skipping startup terminal workspace cleanup; failed to fetch terminal issues: #{inspect(reason)}")
     end
 
     :ok
@@ -41,17 +39,24 @@ defmodule SymphonyElixir.Orchestrator.Runtime do
     delay_ms = retry_delay(next_attempt, metadata)
     old_timer = Map.get(previous_retry, :timer_ref)
     retry_token = make_ref()
-    due_at_ms = System.monotonic_time(:millisecond) + delay_ms
+    due_at_ms = Scheduler.monotonic_time(scheduler_adapter(state), :millisecond) + delay_ms
     identifier = pick_retry_identifier(issue_id, previous_retry, metadata)
     error = pick_retry_error(previous_retry, metadata)
     worker_host = pick_retry_worker_host(previous_retry, metadata)
     workspace_path = pick_retry_workspace_path(previous_retry, metadata)
 
     if is_reference(old_timer) do
-      Process.cancel_timer(old_timer)
+      Scheduler.cancel_timer(scheduler_adapter(state), old_timer)
     end
 
-    timer_ref = Process.send_after(self(), {:retry_issue, issue_id, retry_token}, delay_ms)
+    timer_ref =
+      Scheduler.send_after(
+        scheduler_adapter(state),
+        self(),
+        {:retry_issue, issue_id, retry_token},
+        delay_ms
+      )
+
     error_suffix = if is_binary(error), do: " error=#{error}", else: ""
 
     Logger.warning(
@@ -166,9 +171,7 @@ defmodule SymphonyElixir.Orchestrator.Runtime do
         handle_active_retry(state, issue, attempt, metadata)
 
       true ->
-        Logger.debug(
-          "Issue left active states, removing claim issue_id=#{issue_id} issue_identifier=#{issue.identifier}"
-        )
+        Logger.debug("Issue left active states, removing claim issue_id=#{issue_id} issue_identifier=#{issue.identifier}")
 
         {:noreply, release_issue_claim(state, issue_id)}
     end
@@ -219,6 +222,12 @@ defmodule SymphonyElixir.Orchestrator.Runtime do
     max_delay_power = min(attempt - 1, 10)
     min(@failure_retry_base_ms * (1 <<< max_delay_power), Config.settings!().agent.max_retry_backoff_ms)
   end
+
+  defp scheduler_adapter(state) when is_map(state) do
+    Map.get(state, :scheduler) || SymphonyElixir.Scheduler.System
+  end
+
+  defp scheduler_adapter(_), do: SymphonyElixir.Scheduler.System
 
   defp pick_retry_identifier(issue_id, previous_retry, metadata) do
     metadata[:identifier] || Map.get(previous_retry, :identifier) || issue_id
