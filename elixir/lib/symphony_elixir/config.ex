@@ -23,8 +23,8 @@ defmodule SymphonyElixir.Config do
 
   @type codex_runtime_settings :: %{
           approval_policy: String.t() | map(),
-          thread_sandbox: String.t(),
-          turn_sandbox_policy: map()
+          thread_sandbox: String.t() | nil,
+          turn_sandbox_policy: map() | nil
         }
 
   @type acp_backend_runtime_settings :: %{
@@ -151,7 +151,7 @@ defmodule SymphonyElixir.Config do
     end
   end
 
-  @spec codex_turn_sandbox_policy(Path.t() | nil) :: map()
+  @spec codex_turn_sandbox_policy(Path.t() | nil) :: map() | nil
   def codex_turn_sandbox_policy(workspace \\ nil) do
     case Schema.resolve_runtime_turn_sandbox_policy(settings!(), workspace) do
       {:ok, policy} ->
@@ -188,6 +188,15 @@ defmodule SymphonyElixir.Config do
     end
   end
 
+  @spec human_review_state() :: String.t()
+  def human_review_state do
+    tracker = settings!().tracker
+
+    normalize_optional_string(tracker.human_review_state) ||
+      inferred_human_review_state(tracker.active_states, tracker.terminal_states) ||
+      "Human Review"
+  end
+
   @spec codex_runtime_settings(Path.t() | nil, keyword()) ::
           {:ok, codex_runtime_settings()} | {:error, term()}
   def codex_runtime_settings(workspace \\ nil, opts \\ []) do
@@ -222,6 +231,26 @@ defmodule SymphonyElixir.Config do
         :ok
     end
   end
+
+  defp inferred_human_review_state(active_states, terminal_states) do
+    (List.wrap(active_states) ++ List.wrap(terminal_states))
+    |> Enum.filter(&is_binary/1)
+    |> Enum.find(fn state_name ->
+      normalized = normalize_optional_string(state_name)
+
+      normalized == "Human Review" ||
+        (is_binary(normalized) and String.contains?(String.downcase(normalized), "human"))
+    end)
+  end
+
+  defp normalize_optional_string(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_optional_string(_value), do: nil
 
   defp format_config_error(reason) do
     case reason do

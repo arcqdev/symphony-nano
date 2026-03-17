@@ -5,6 +5,7 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   require Logger
   alias SymphonyElixir.{Codex.DynamicTool, Config, PathSafety, SSH}
+  alias SymphonyElixir.Codex.AppServer.Approvals
 
   @initialize_id 1
   @thread_start_id 2
@@ -18,8 +19,8 @@ defmodule SymphonyElixir.Codex.AppServer do
           metadata: map(),
           approval_policy: String.t() | map(),
           auto_approve_requests: boolean(),
-          thread_sandbox: String.t(),
-          turn_sandbox_policy: map(),
+          thread_sandbox: String.t() | nil,
+          turn_sandbox_policy: map() | nil,
           thread_id: String.t(),
           workspace: Path.t(),
           worker_host: String.t() | nil
@@ -292,15 +293,18 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp start_thread(port, workspace, %{approval_policy: approval_policy, thread_sandbox: thread_sandbox}) do
-    send_message(port, %{
-      "method" => "thread/start",
-      "id" => @thread_start_id,
-      "params" => %{
+    params =
+      %{
         "approvalPolicy" => approval_policy,
-        "sandbox" => thread_sandbox,
         "cwd" => workspace,
         "dynamicTools" => DynamicTool.tool_specs()
       }
+      |> maybe_put_thread_sandbox(thread_sandbox)
+
+    send_message(port, %{
+      "method" => "thread/start",
+      "id" => @thread_start_id,
+      "params" => params
     })
 
     case await_response(port, @thread_start_id) do
@@ -316,10 +320,8 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp start_turn(port, thread_id, prompt, issue, workspace, approval_policy, turn_sandbox_policy) do
-    send_message(port, %{
-      "method" => "turn/start",
-      "id" => @turn_start_id,
-      "params" => %{
+    params =
+      %{
         "threadId" => thread_id,
         "input" => [
           %{
@@ -329,9 +331,14 @@ defmodule SymphonyElixir.Codex.AppServer do
         ],
         "cwd" => workspace,
         "title" => "#{issue.identifier}: #{issue.title}",
-        "approvalPolicy" => approval_policy,
-        "sandboxPolicy" => turn_sandbox_policy
+        "approvalPolicy" => approval_policy
       }
+      |> maybe_put_turn_sandbox_policy(turn_sandbox_policy)
+
+    send_message(port, %{
+      "method" => "turn/start",
+      "id" => @turn_start_id,
+      "params" => params
     })
 
     case await_response(port, @turn_start_id) do
@@ -339,6 +346,21 @@ defmodule SymphonyElixir.Codex.AppServer do
       other -> other
     end
   end
+
+  defp maybe_put_turn_sandbox_policy(params, %{} = turn_sandbox_policy) do
+    Map.put(params, "sandboxPolicy", turn_sandbox_policy)
+  end
+
+  defp maybe_put_turn_sandbox_policy(params, _turn_sandbox_policy), do: params
+
+  defp maybe_put_thread_sandbox(params, thread_sandbox) when is_binary(thread_sandbox) do
+    case String.trim(thread_sandbox) do
+      "" -> params
+      value -> Map.put(params, "sandbox", value)
+    end
+  end
+
+  defp maybe_put_thread_sandbox(params, _thread_sandbox), do: params
 
   defp await_turn_completion(port, on_message, tool_executor, auto_approve_requests) do
     receive_loop(
@@ -537,398 +559,27 @@ defmodule SymphonyElixir.Codex.AppServer do
 
   defp maybe_handle_approval_request(
          port,
-         "item/commandExecution/requestApproval",
-         %{"id" => id} = payload,
-         payload_string,
-         on_message,
-         metadata,
-         _tool_executor,
-         auto_approve_requests
-       ) do
-    approve_or_require(
-      port,
-      id,
-      "acceptForSession",
-      payload,
-      payload_string,
-      on_message,
-      metadata,
-      auto_approve_requests
-    )
-  end
-
-  defp maybe_handle_approval_request(
-         port,
-         "item/tool/call",
-         %{"id" => id, "params" => params} = payload,
+         method,
+         payload,
          payload_string,
          on_message,
          metadata,
          tool_executor,
-         _auto_approve_requests
-       ) do
-    tool_name = tool_call_name(params)
-    arguments = tool_call_arguments(params)
-
-    result =
-      tool_name
-      |> tool_executor.(arguments)
-      |> normalize_dynamic_tool_result()
-
-    send_message(port, %{
-      "id" => id,
-      "result" => result
-    })
-
-    event =
-      case result do
-        %{"success" => true} -> :tool_call_completed
-        _ when is_nil(tool_name) -> :unsupported_tool_call
-        _ -> :tool_call_failed
-      end
-
-    emit_message(on_message, event, %{payload: payload, raw: payload_string}, metadata)
-
-    :approved
-  end
-
-  defp maybe_handle_approval_request(
-         port,
-         "execCommandApproval",
-         %{"id" => id} = payload,
-         payload_string,
-         on_message,
-         metadata,
-         _tool_executor,
          auto_approve_requests
        ) do
-    approve_or_require(
+    Approvals.maybe_handle_approval_request(
       port,
-      id,
-      "approved_for_session",
+      method,
       payload,
       payload_string,
       on_message,
       metadata,
-      auto_approve_requests
+      tool_executor,
+      auto_approve_requests,
+      send_message: &send_message/2,
+      emit_message: &emit_message/4,
+      non_interactive_tool_input_answer: @non_interactive_tool_input_answer
     )
-  end
-
-  defp maybe_handle_approval_request(
-         port,
-         "applyPatchApproval",
-         %{"id" => id} = payload,
-         payload_string,
-         on_message,
-         metadata,
-         _tool_executor,
-         auto_approve_requests
-       ) do
-    approve_or_require(
-      port,
-      id,
-      "approved_for_session",
-      payload,
-      payload_string,
-      on_message,
-      metadata,
-      auto_approve_requests
-    )
-  end
-
-  defp maybe_handle_approval_request(
-         port,
-         "item/fileChange/requestApproval",
-         %{"id" => id} = payload,
-         payload_string,
-         on_message,
-         metadata,
-         _tool_executor,
-         auto_approve_requests
-       ) do
-    approve_or_require(
-      port,
-      id,
-      "acceptForSession",
-      payload,
-      payload_string,
-      on_message,
-      metadata,
-      auto_approve_requests
-    )
-  end
-
-  defp maybe_handle_approval_request(
-         port,
-         "item/tool/requestUserInput",
-         %{"id" => id, "params" => params} = payload,
-         payload_string,
-         on_message,
-         metadata,
-         _tool_executor,
-         auto_approve_requests
-       ) do
-    maybe_auto_answer_tool_request_user_input(
-      port,
-      id,
-      params,
-      payload,
-      payload_string,
-      on_message,
-      metadata,
-      auto_approve_requests
-    )
-  end
-
-  defp maybe_handle_approval_request(
-         _port,
-         _method,
-         _payload,
-         _payload_string,
-         _on_message,
-         _metadata,
-         _tool_executor,
-         _auto_approve_requests
-       ) do
-    :unhandled
-  end
-
-  defp normalize_dynamic_tool_result(%{"success" => success} = result) when is_boolean(success) do
-    output =
-      case Map.get(result, "output") do
-        existing_output when is_binary(existing_output) -> existing_output
-        _ -> dynamic_tool_output(result)
-      end
-
-    content_items =
-      case Map.get(result, "contentItems") do
-        existing_items when is_list(existing_items) -> existing_items
-        _ -> dynamic_tool_content_items(output)
-      end
-
-    result
-    |> Map.put("output", output)
-    |> Map.put("contentItems", content_items)
-  end
-
-  defp normalize_dynamic_tool_result(result) do
-    %{
-      "success" => false,
-      "output" => inspect(result),
-      "contentItems" => dynamic_tool_content_items(inspect(result))
-    }
-  end
-
-  defp dynamic_tool_output(%{"contentItems" => [%{"text" => text} | _]}) when is_binary(text), do: text
-  defp dynamic_tool_output(result), do: Jason.encode!(result, pretty: true)
-
-  defp dynamic_tool_content_items(output) when is_binary(output) do
-    [
-      %{
-        "type" => "inputText",
-        "text" => output
-      }
-    ]
-  end
-
-  defp approve_or_require(
-         port,
-         id,
-         decision,
-         payload,
-         payload_string,
-         on_message,
-         metadata,
-         true
-       ) do
-    send_message(port, %{"id" => id, "result" => %{"decision" => decision}})
-
-    emit_message(
-      on_message,
-      :approval_auto_approved,
-      %{payload: payload, raw: payload_string, decision: decision},
-      metadata
-    )
-
-    :approved
-  end
-
-  defp approve_or_require(
-         _port,
-         _id,
-         _decision,
-         _payload,
-         _payload_string,
-         _on_message,
-         _metadata,
-         false
-       ) do
-    :approval_required
-  end
-
-  defp maybe_auto_answer_tool_request_user_input(
-         port,
-         id,
-         params,
-         payload,
-         payload_string,
-         on_message,
-         metadata,
-         true
-       ) do
-    case tool_request_user_input_approval_answers(params) do
-      {:ok, answers, decision} ->
-        send_message(port, %{"id" => id, "result" => %{"answers" => answers}})
-
-        emit_message(
-          on_message,
-          :approval_auto_approved,
-          %{payload: payload, raw: payload_string, decision: decision},
-          metadata
-        )
-
-        :approved
-
-      :error ->
-        reply_with_non_interactive_tool_input_answer(
-          port,
-          id,
-          params,
-          payload,
-          payload_string,
-          on_message,
-          metadata
-        )
-    end
-  end
-
-  defp maybe_auto_answer_tool_request_user_input(
-         port,
-         id,
-         params,
-         payload,
-         payload_string,
-         on_message,
-         metadata,
-         false
-       ) do
-    reply_with_non_interactive_tool_input_answer(
-      port,
-      id,
-      params,
-      payload,
-      payload_string,
-      on_message,
-      metadata
-    )
-  end
-
-  defp tool_request_user_input_approval_answers(%{"questions" => questions}) when is_list(questions) do
-    answers =
-      Enum.reduce_while(questions, %{}, fn question, acc ->
-        case tool_request_user_input_approval_answer(question) do
-          {:ok, question_id, answer_label} ->
-            {:cont, Map.put(acc, question_id, %{"answers" => [answer_label]})}
-
-          :error ->
-            {:halt, :error}
-        end
-      end)
-
-    case answers do
-      :error -> :error
-      answer_map when map_size(answer_map) > 0 -> {:ok, answer_map, "Approve this Session"}
-      _ -> :error
-    end
-  end
-
-  defp tool_request_user_input_approval_answers(_params), do: :error
-
-  defp reply_with_non_interactive_tool_input_answer(
-         port,
-         id,
-         params,
-         payload,
-         payload_string,
-         on_message,
-         metadata
-       ) do
-    case tool_request_user_input_unavailable_answers(params) do
-      {:ok, answers} ->
-        send_message(port, %{"id" => id, "result" => %{"answers" => answers}})
-
-        emit_message(
-          on_message,
-          :tool_input_auto_answered,
-          %{payload: payload, raw: payload_string, answer: @non_interactive_tool_input_answer},
-          metadata
-        )
-
-        :approved
-
-      :error ->
-        :input_required
-    end
-  end
-
-  defp tool_request_user_input_unavailable_answers(%{"questions" => questions}) when is_list(questions) do
-    answers =
-      Enum.reduce_while(questions, %{}, fn question, acc ->
-        case tool_request_user_input_question_id(question) do
-          {:ok, question_id} ->
-            {:cont, Map.put(acc, question_id, %{"answers" => [@non_interactive_tool_input_answer]})}
-
-          :error ->
-            {:halt, :error}
-        end
-      end)
-
-    case answers do
-      :error -> :error
-      answer_map when map_size(answer_map) > 0 -> {:ok, answer_map}
-      _ -> :error
-    end
-  end
-
-  defp tool_request_user_input_unavailable_answers(_params), do: :error
-
-  defp tool_request_user_input_question_id(%{"id" => question_id}) when is_binary(question_id),
-    do: {:ok, question_id}
-
-  defp tool_request_user_input_question_id(_question), do: :error
-
-  defp tool_request_user_input_approval_answer(%{"id" => question_id, "options" => options})
-       when is_binary(question_id) and is_list(options) do
-    case tool_request_user_input_approval_option_label(options) do
-      nil -> :error
-      answer_label -> {:ok, question_id, answer_label}
-    end
-  end
-
-  defp tool_request_user_input_approval_answer(_question), do: :error
-
-  defp tool_request_user_input_approval_option_label(options) do
-    options
-    |> Enum.map(&tool_request_user_input_option_label/1)
-    |> Enum.reject(&is_nil/1)
-    |> case do
-      labels ->
-        Enum.find(labels, &(&1 == "Approve this Session")) ||
-          Enum.find(labels, &(&1 == "Approve Once")) ||
-          Enum.find(labels, &approval_option_label?/1)
-    end
-  end
-
-  defp tool_request_user_input_option_label(%{"label" => label}) when is_binary(label), do: label
-  defp tool_request_user_input_option_label(_option), do: nil
-
-  defp approval_option_label?(label) when is_binary(label) do
-    normalized_label =
-      label
-      |> String.trim()
-      |> String.downcase()
-
-    String.starts_with?(normalized_label, "approve") or String.starts_with?(normalized_label, "allow")
   end
 
   defp await_response(port, request_id) do
@@ -1077,27 +728,6 @@ defmodule SymphonyElixir.Codex.AppServer do
   end
 
   defp default_on_message(_message), do: :ok
-
-  defp tool_call_name(params) when is_map(params) do
-    case Map.get(params, "tool") || Map.get(params, :tool) || Map.get(params, "name") || Map.get(params, :name) do
-      name when is_binary(name) ->
-        case String.trim(name) do
-          "" -> nil
-          trimmed -> trimmed
-        end
-
-      _ ->
-        nil
-    end
-  end
-
-  defp tool_call_name(_params), do: nil
-
-  defp tool_call_arguments(params) when is_map(params) do
-    Map.get(params, "arguments") || Map.get(params, :arguments) || %{}
-  end
-
-  defp tool_call_arguments(_params), do: %{}
 
   defp send_message(port, message) do
     line = Jason.encode!(message) <> "\n"

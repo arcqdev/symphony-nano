@@ -5,7 +5,8 @@ defmodule SymphonyElixir.Acp.Client do
 
   require Logger
 
-  alias SymphonyElixir.{Config, PathSafety, SSH, StageRouting}
+  alias SymphonyElixir.{Config, StageRouting}
+  alias SymphonyElixir.Acp.{TurnControl, Workspace}
 
   @initialize_id 1
   @session_new_id 2
@@ -200,114 +201,13 @@ defmodule SymphonyElixir.Acp.Client do
     end
   end
 
-  defp validate_workspace_cwd(workspace, nil) when is_binary(workspace) do
-    expanded_workspace = Path.expand(workspace)
-    expanded_root = Path.expand(Config.settings!().workspace.root)
-    expanded_root_prefix = expanded_root <> "/"
+  defp validate_workspace_cwd(workspace, worker_host),
+    do: Workspace.validate_workspace_cwd(workspace, worker_host)
 
-    with {:ok, canonical_workspace} <- PathSafety.canonicalize(expanded_workspace),
-         {:ok, canonical_root} <- PathSafety.canonicalize(expanded_root) do
-      canonical_root_prefix = canonical_root <> "/"
+  defp start_port(workspace, worker_host, backend_config),
+    do: Workspace.start_port(workspace, worker_host, backend_config, @port_line_bytes)
 
-      cond do
-        canonical_workspace == canonical_root ->
-          {:error, {:invalid_workspace_cwd, :workspace_root, canonical_workspace}}
-
-        String.starts_with?(canonical_workspace <> "/", canonical_root_prefix) ->
-          {:ok, canonical_workspace}
-
-        String.starts_with?(expanded_workspace <> "/", expanded_root_prefix) ->
-          {:error, {:invalid_workspace_cwd, :symlink_escape, expanded_workspace, canonical_root}}
-
-        true ->
-          {:error, {:invalid_workspace_cwd, :outside_workspace_root, canonical_workspace, canonical_root}}
-      end
-    else
-      {:error, {:path_canonicalize_failed, path, reason}} ->
-        {:error, {:invalid_workspace_cwd, :path_unreadable, path, reason}}
-    end
-  end
-
-  defp validate_workspace_cwd(workspace, worker_host) when is_binary(workspace) and is_binary(worker_host) do
-    cond do
-      String.trim(workspace) == "" ->
-        {:error, {:invalid_workspace_cwd, :empty_remote_workspace, worker_host}}
-
-      String.contains?(workspace, ["\n", "\r", <<0>>]) ->
-        {:error, {:invalid_workspace_cwd, :invalid_remote_workspace, worker_host, workspace}}
-
-      true ->
-        {:ok, workspace}
-    end
-  end
-
-  defp start_port(workspace, nil, backend_config) do
-    executable = System.find_executable("bash")
-
-    if is_nil(executable) do
-      {:error, :bash_not_found}
-    else
-      command = "exec " <> backend_config.command
-
-      port_options =
-        [
-          :binary,
-          :exit_status,
-          :stderr_to_stdout,
-          args: [~c"-lc", String.to_charlist(command)],
-          cd: String.to_charlist(workspace),
-          line: @port_line_bytes
-        ] ++ local_env_port_options(backend_config.env)
-
-      port = Port.open({:spawn_executable, String.to_charlist(executable)}, port_options)
-      {:ok, port}
-    end
-  end
-
-  defp start_port(workspace, worker_host, backend_config) when is_binary(worker_host) do
-    SSH.start_port(worker_host, remote_launch_command(workspace, backend_config), line: @port_line_bytes)
-  end
-
-  defp local_env_port_options(env) when map_size(env) == 0, do: []
-
-  defp local_env_port_options(env) do
-    [
-      env:
-        Enum.map(env, fn {key, value} ->
-          {String.to_charlist(key), String.to_charlist(value)}
-        end)
-    ]
-  end
-
-  defp remote_launch_command(workspace, %{command: command, env: env}) do
-    env_exports =
-      env
-      |> Enum.map(fn {key, value} -> "export #{key}=#{shell_escape(value)}" end)
-      |> Enum.join(" && ")
-
-    [env_exports, "cd #{shell_escape(workspace)}", "exec #{command}"]
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.join(" && ")
-  end
-
-  defp port_metadata(port, worker_host) when is_port(port) do
-    base_metadata =
-      case :erlang.port_info(port, :os_pid) do
-        {:os_pid, os_pid} ->
-          %{
-            acp_server_pid: to_string(os_pid),
-            codex_app_server_pid: to_string(os_pid)
-          }
-
-        _ ->
-          %{}
-      end
-
-    case worker_host do
-      host when is_binary(host) -> Map.put(base_metadata, :worker_host, host)
-      _ -> base_metadata
-    end
-  end
+  defp port_metadata(port, worker_host), do: Workspace.port_metadata(port, worker_host)
 
   defp send_initialize(port, timeout_ms) do
     send_message(port, %{
@@ -705,35 +605,8 @@ defmodule SymphonyElixir.Acp.Client do
     end
   end
 
-  defp permission_outcome(params, bypass_permissions) do
-    options = Map.get(params, "options", [])
-
-    selected_option =
-      if bypass_permissions do
-        select_permission_option(options, ["allow_always", "allow_once", "allow"])
-      else
-        select_permission_option(options, ["allow_once", "allow_always", "allow"])
-      end ||
-        select_permission_option(options, ["reject_once", "reject_always", "reject"])
-
-    case selected_option do
-      %{"optionId" => option_id} ->
-        %{
-          "outcome" => "selected",
-          "optionId" => option_id
-        }
-
-      _ ->
-        %{"outcome" => "cancelled"}
-    end
-  end
-
-  defp select_permission_option(options, preferred_kinds) when is_list(options) do
-    Enum.find(options, fn option ->
-      option_value = Map.get(option, "optionId") || Map.get(option, "kind")
-      option_value in preferred_kinds and is_binary(Map.get(option, "optionId"))
-    end)
-  end
+  defp permission_outcome(params, bypass_permissions),
+    do: TurnControl.permission_outcome(params, bypass_permissions)
 
   defp mode_available?(available_modes, mode_id) when is_list(available_modes) do
     Enum.any?(available_modes, fn mode ->
@@ -779,33 +652,15 @@ defmodule SymphonyElixir.Acp.Client do
     end)
   end
 
-  defp receive_timeout(deadline_ms, stall_deadline_ms) do
-    [
-      milliseconds_until(deadline_ms),
-      milliseconds_until(stall_deadline_ms)
-    ]
-    |> Enum.reject(&is_nil/1)
-    |> case do
-      [] -> 0
-      values -> Enum.min(values)
-    end
-  end
+  defp receive_timeout(deadline_ms, stall_deadline_ms),
+    do: TurnControl.receive_timeout(deadline_ms, stall_deadline_ms)
 
-  defp milliseconds_until(:infinity), do: nil
+  defp next_stall_deadline(stall_timeout_ms),
+    do: TurnControl.next_stall_deadline(stall_timeout_ms)
 
-  defp milliseconds_until(target_ms) when is_integer(target_ms) do
-    max(target_ms - System.monotonic_time(:millisecond), 0)
-  end
+  defp deadline_expired?(deadline_ms), do: TurnControl.deadline_expired?(deadline_ms)
 
-  defp next_stall_deadline(0), do: :infinity
-  defp next_stall_deadline(stall_timeout_ms), do: System.monotonic_time(:millisecond) + stall_timeout_ms
-
-  defp deadline_expired?(deadline_ms) do
-    System.monotonic_time(:millisecond) >= deadline_ms
-  end
-
-  defp stall_expired?(:infinity), do: false
-  defp stall_expired?(stall_deadline_ms), do: System.monotonic_time(:millisecond) >= stall_deadline_ms
+  defp stall_expired?(stall_deadline_ms), do: TurnControl.stall_expired?(stall_deadline_ms)
 
   defp generate_turn_id do
     "turn-" <> Base.url_encode64(:crypto.strong_rand_bytes(4), padding: false)
@@ -914,10 +769,6 @@ defmodule SymphonyElixir.Acp.Client do
     if trimmed != "" do
       Logger.debug("#{label} non-json output=#{inspect(String.slice(trimmed, 0, @max_stream_log_bytes))}")
     end
-  end
-
-  defp shell_escape(value) when is_binary(value) do
-    "'" <> String.replace(value, "'", "'\"'\"'") <> "'"
   end
 
   defp issue_context(%{id: issue_id, identifier: identifier}) do

@@ -3,7 +3,7 @@ defmodule SymphonyElixirWeb.Presenter do
   Shared projections for the observability API and dashboard.
   """
 
-  alias SymphonyElixir.{Config, Orchestrator, StatusDashboard}
+  alias SymphonyElixir.{Config, Orchestrator, StatusDashboard, Tracker}
 
   @spec state_payload(GenServer.name(), timeout()) :: map()
   def state_payload(orchestrator, snapshot_timeout_ms) do
@@ -13,6 +13,7 @@ defmodule SymphonyElixirWeb.Presenter do
       %{} = snapshot ->
         %{
           generated_at: generated_at,
+          tracker: tracker_payload(),
           counts: %{
             running: length(snapshot.running),
             retrying: length(snapshot.retrying)
@@ -81,6 +82,19 @@ defmodule SymphonyElixirWeb.Presenter do
       recent_events: (running && recent_events_payload(running)) || [],
       last_error: retry && retry.error,
       tracked: %{}
+    }
+  end
+
+  defp tracker_payload do
+    summary = Tracker.project_summary()
+
+    %{
+      kind: Map.get(summary, :kind),
+      project: %{
+        name: Map.get(summary, :name),
+        slug: Map.get(summary, :slug),
+        url: Map.get(summary, :url)
+      }
     }
   end
 

@@ -125,10 +125,7 @@ defmodule SymphonyElixir.LiveE2ETest do
     run_live_issue_flow!(:local)
   end
 
-  @tag skip: @live_e2e_skip_reason
-  test "creates a real Linear project and issue with an ssh worker" do
-    run_live_issue_flow!(:ssh)
-  end
+  def run_live_issue_flow_for_test!(backend), do: run_live_issue_flow!(backend)
 
   defp fetch_team!(team_key) do
     @team_query

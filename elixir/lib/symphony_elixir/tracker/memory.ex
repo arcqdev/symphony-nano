@@ -5,6 +5,7 @@ defmodule SymphonyElixir.Tracker.Memory do
 
   @behaviour SymphonyElixir.Tracker
 
+  alias SymphonyElixir.Config
   alias SymphonyElixir.Linear.Issue
 
   @spec fetch_candidate_issues() :: {:ok, [Issue.t()]} | {:error, term()}
@@ -33,6 +34,18 @@ defmodule SymphonyElixir.Tracker.Memory do
      Enum.filter(issue_entries(), fn %Issue{id: id} ->
        MapSet.member?(wanted_ids, id)
      end)}
+  end
+
+  @spec project_summary() :: map()
+  def project_summary do
+    tracker = Config.settings!().tracker
+
+    %{
+      kind: tracker.kind || "memory",
+      slug: tracker.project_slug,
+      name: nil,
+      url: nil
+    }
   end
 
   @spec create_comment(String.t(), String.t()) :: :ok | {:error, term()}

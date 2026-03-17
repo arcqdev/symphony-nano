@@ -21,317 +21,18 @@ defmodule SymphonyElixir.Config.Schema do
 
   @builtin_backend_names ["codex"]
 
-  defmodule StringOrMap do
-    @moduledoc false
-    @behaviour Ecto.Type
-
-    @spec type() :: :map
-    def type, do: :map
-
-    @spec embed_as(term()) :: :self
-    def embed_as(_format), do: :self
-
-    @spec equal?(term(), term()) :: boolean()
-    def equal?(left, right), do: left == right
-
-    @spec cast(term()) :: {:ok, String.t() | map()} | :error
-    def cast(value) when is_binary(value) or is_map(value), do: {:ok, value}
-    def cast(_value), do: :error
-
-    @spec load(term()) :: {:ok, String.t() | map()} | :error
-    def load(value) when is_binary(value) or is_map(value), do: {:ok, value}
-    def load(_value), do: :error
-
-    @spec dump(term()) :: {:ok, String.t() | map()} | :error
-    def dump(value) when is_binary(value) or is_map(value), do: {:ok, value}
-    def dump(_value), do: :error
-  end
-
-  defmodule Tracker do
-    @moduledoc false
-    use Ecto.Schema
-    import Ecto.Changeset
-
-    @primary_key false
-
-    embedded_schema do
-      field(:kind, :string)
-      field(:endpoint, :string, default: "https://api.linear.app/graphql")
-      field(:api_key, :string)
-      field(:project_slug, :string)
-      field(:assignee, :string)
-      field(:active_states, {:array, :string}, default: ["Todo", "In Progress"])
-      field(:terminal_states, {:array, :string}, default: ["Closed", "Cancelled", "Canceled", "Duplicate", "Done"])
-    end
-
-    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
-    def changeset(schema, attrs) do
-      schema
-      |> cast(
-        attrs,
-        [:kind, :endpoint, :api_key, :project_slug, :assignee, :active_states, :terminal_states],
-        empty_values: []
-      )
-    end
-  end
-
-  defmodule Polling do
-    @moduledoc false
-    use Ecto.Schema
-    import Ecto.Changeset
-
-    @primary_key false
-    embedded_schema do
-      field(:interval_ms, :integer, default: 30_000)
-    end
-
-    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
-    def changeset(schema, attrs) do
-      schema
-      |> cast(attrs, [:interval_ms], empty_values: [])
-      |> validate_number(:interval_ms, greater_than: 0)
-    end
-  end
-
-  defmodule Workspace do
-    @moduledoc false
-    use Ecto.Schema
-    import Ecto.Changeset
-
-    @primary_key false
-    embedded_schema do
-      field(:root, :string, default: Path.join(System.tmp_dir!(), "symphony_workspaces"))
-    end
-
-    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
-    def changeset(schema, attrs) do
-      schema
-      |> cast(attrs, [:root], empty_values: [])
-    end
-  end
-
-  defmodule Worker do
-    @moduledoc false
-    use Ecto.Schema
-    import Ecto.Changeset
-
-    @primary_key false
-    embedded_schema do
-      field(:ssh_hosts, {:array, :string}, default: [])
-      field(:max_concurrent_agents_per_host, :integer)
-    end
-
-    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
-    def changeset(schema, attrs) do
-      schema
-      |> cast(attrs, [:ssh_hosts, :max_concurrent_agents_per_host], empty_values: [])
-      |> validate_number(:max_concurrent_agents_per_host, greater_than: 0)
-    end
-  end
-
-  defmodule Agent do
-    @moduledoc false
-    use Ecto.Schema
-    import Ecto.Changeset
-
-    alias SymphonyElixir.Config.Schema
-
-    @primary_key false
-    embedded_schema do
-      field(:backend, :string, default: "codex")
-      field(:stage_backends, :map, default: %{})
-      field(:stage_models, :map, default: %{})
-      field(:stage_reasoning_efforts, :map, default: %{})
-      field(:max_concurrent_agents, :integer, default: 10)
-      field(:max_turns, :integer, default: 20)
-      field(:max_retry_backoff_ms, :integer, default: 300_000)
-      field(:max_concurrent_agents_by_state, :map, default: %{})
-      field(:max_input_tokens, :integer, default: 4_000_000)
-      field(:max_output_tokens, :integer, default: 400_000)
-    end
-
-    @spec changeset(%__MODULE__{}, map(), [String.t()]) :: Ecto.Changeset.t()
-    def changeset(schema, attrs, allowed_backends) do
-      schema
-      |> cast(
-        attrs,
-        [
-          :backend,
-          :stage_backends,
-          :stage_models,
-          :stage_reasoning_efforts,
-          :max_concurrent_agents,
-          :max_turns,
-          :max_retry_backoff_ms,
-          :max_concurrent_agents_by_state,
-          :max_input_tokens,
-          :max_output_tokens
-        ],
-        empty_values: []
-      )
-      |> update_change(:backend, &Schema.normalize_backend_name/1)
-      |> Schema.validate_backend_name(:backend, allowed_backends)
-      |> update_change(:stage_backends, &Schema.normalize_stage_backends/1)
-      |> Schema.validate_stage_backends(:stage_backends, allowed_backends)
-      |> update_change(:stage_models, &Schema.normalize_stage_string_map/1)
-      |> Schema.validate_stage_string_map(:stage_models, "stage models must be non-empty strings")
-      |> update_change(:stage_reasoning_efforts, &Schema.normalize_stage_string_map/1)
-      |> Schema.validate_stage_string_map(
-        :stage_reasoning_efforts,
-        "stage reasoning efforts must be non-empty strings"
-      )
-      |> validate_number(:max_concurrent_agents, greater_than: 0)
-      |> validate_number(:max_turns, greater_than: 0)
-      |> validate_number(:max_retry_backoff_ms, greater_than: 0)
-      |> validate_number(:max_input_tokens, greater_than: 0)
-      |> validate_number(:max_output_tokens, greater_than: 0)
-      |> update_change(:max_concurrent_agents_by_state, &Schema.normalize_state_limits/1)
-      |> Schema.validate_state_limits(:max_concurrent_agents_by_state)
-    end
-  end
-
-  defmodule Codex do
-    @moduledoc false
-    use Ecto.Schema
-    import Ecto.Changeset
-
-    @primary_key false
-    embedded_schema do
-      field(:command, :string, default: "codex app-server")
-      field(:model, :string)
-      field(:reasoning_effort, :string)
-
-      field(:approval_policy, StringOrMap,
-        default: %{
-          "reject" => %{
-            "sandbox_approval" => true,
-            "rules" => true,
-            "mcp_elicitations" => true
-          }
-        }
-      )
-
-      field(:thread_sandbox, :string, default: "workspace-write")
-      field(:turn_sandbox_policy, :map)
-      field(:turn_timeout_ms, :integer, default: 3_600_000)
-      field(:read_timeout_ms, :integer, default: 5_000)
-      field(:stall_timeout_ms, :integer, default: 300_000)
-    end
-
-    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
-    def changeset(schema, attrs) do
-      schema
-      |> cast(
-        attrs,
-        [
-          :command,
-          :model,
-          :reasoning_effort,
-          :approval_policy,
-          :thread_sandbox,
-          :turn_sandbox_policy,
-          :turn_timeout_ms,
-          :read_timeout_ms,
-          :stall_timeout_ms
-        ],
-        empty_values: []
-      )
-      |> validate_required([:command])
-      |> validate_number(:turn_timeout_ms, greater_than: 0)
-      |> validate_number(:read_timeout_ms, greater_than: 0)
-      |> validate_number(:stall_timeout_ms, greater_than_or_equal_to: 0)
-    end
-  end
-
-  defmodule Acp do
-    @moduledoc false
-    use Ecto.Schema
-    import Ecto.Changeset
-
-    alias SymphonyElixir.Config.Schema
-
-    @primary_key false
-    embedded_schema do
-      field(:backends, :map, default: %{"claude-code" => %{"command" => "claude-agent-acp", "env" => %{}}})
-      field(:bypass_permissions, :boolean, default: true)
-      field(:read_timeout_ms, :integer, default: 5_000)
-      field(:stall_timeout_ms, :integer, default: 300_000)
-      field(:turn_timeout_ms, :integer, default: 3_600_000)
-    end
-
-    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
-    def changeset(schema, attrs) do
-      schema
-      |> cast(attrs, [:backends, :bypass_permissions, :read_timeout_ms, :stall_timeout_ms, :turn_timeout_ms], empty_values: [])
-      |> update_change(:backends, &Schema.normalize_acp_backends/1)
-      |> Schema.validate_acp_backends(:backends)
-      |> validate_number(:read_timeout_ms, greater_than: 0)
-      |> validate_number(:stall_timeout_ms, greater_than_or_equal_to: 0)
-      |> validate_number(:turn_timeout_ms, greater_than: 0)
-    end
-  end
-
-  defmodule Hooks do
-    @moduledoc false
-    use Ecto.Schema
-    import Ecto.Changeset
-
-    @primary_key false
-    embedded_schema do
-      field(:after_create, :string)
-      field(:before_run, :string)
-      field(:after_run, :string)
-      field(:before_remove, :string)
-      field(:timeout_ms, :integer, default: 60_000)
-    end
-
-    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
-    def changeset(schema, attrs) do
-      schema
-      |> cast(attrs, [:after_create, :before_run, :after_run, :before_remove, :timeout_ms], empty_values: [])
-      |> validate_number(:timeout_ms, greater_than: 0)
-    end
-  end
-
-  defmodule Observability do
-    @moduledoc false
-    use Ecto.Schema
-    import Ecto.Changeset
-
-    @primary_key false
-    embedded_schema do
-      field(:dashboard_enabled, :boolean, default: true)
-      field(:refresh_ms, :integer, default: 1_000)
-      field(:render_interval_ms, :integer, default: 16)
-    end
-
-    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
-    def changeset(schema, attrs) do
-      schema
-      |> cast(attrs, [:dashboard_enabled, :refresh_ms, :render_interval_ms], empty_values: [])
-      |> validate_number(:refresh_ms, greater_than: 0)
-      |> validate_number(:render_interval_ms, greater_than: 0)
-    end
-  end
-
-  defmodule Server do
-    @moduledoc false
-    use Ecto.Schema
-    import Ecto.Changeset
-
-    @primary_key false
-    embedded_schema do
-      field(:port, :integer)
-      field(:host, :string, default: "127.0.0.1")
-    end
-
-    @spec changeset(%__MODULE__{}, map()) :: Ecto.Changeset.t()
-    def changeset(schema, attrs) do
-      schema
-      |> cast(attrs, [:port, :host], empty_values: [])
-      |> validate_number(:port, greater_than_or_equal_to: 0)
-    end
-  end
+  alias SymphonyElixir.Config.Schema.{
+    Acp,
+    Agent,
+    Codex,
+    Hooks,
+    Observability,
+    Polling,
+    Server,
+    Tracker,
+    Worker,
+    Workspace
+  }
 
   embedded_schema do
     embeds_one(:tracker, Tracker, on_replace: :update, defaults_to_struct: true)
@@ -362,31 +63,39 @@ defmodule SymphonyElixir.Config.Schema do
     end
   end
 
-  @spec resolve_turn_sandbox_policy(%__MODULE__{}, Path.t() | nil) :: map()
+  @spec resolve_turn_sandbox_policy(%__MODULE__{}, Path.t() | nil) :: map() | nil
   def resolve_turn_sandbox_policy(settings, workspace \\ nil) do
     case settings.codex.turn_sandbox_policy do
       %{} = policy ->
         policy
 
       _ ->
-        workspace
-        |> default_workspace_root(settings.workspace.root)
-        |> expand_local_workspace_root()
-        |> default_turn_sandbox_policy()
+        if default_turn_sandbox_disabled?(settings.codex.thread_sandbox) do
+          nil
+        else
+          workspace
+          |> default_workspace_root(settings.workspace.root)
+          |> expand_local_workspace_root()
+          |> default_turn_sandbox_policy()
+        end
     end
   end
 
   @spec resolve_runtime_turn_sandbox_policy(%__MODULE__{}, Path.t() | nil, keyword()) ::
-          {:ok, map()} | {:error, term()}
+          {:ok, map() | nil} | {:error, term()}
   def resolve_runtime_turn_sandbox_policy(settings, workspace \\ nil, opts \\ []) do
     case settings.codex.turn_sandbox_policy do
       %{} = policy ->
         {:ok, policy}
 
       _ ->
-        workspace
-        |> default_workspace_root(settings.workspace.root)
-        |> default_runtime_turn_sandbox_policy(opts)
+        if default_turn_sandbox_disabled?(settings.codex.thread_sandbox) do
+          {:ok, nil}
+        else
+          workspace
+          |> default_workspace_root(settings.workspace.root)
+          |> default_runtime_turn_sandbox_policy(opts)
+        end
     end
   end
 
@@ -828,6 +537,16 @@ defmodule SymphonyElixir.Config.Schema do
   end
 
   defp normalize_secret_value(_value), do: nil
+
+  defp default_turn_sandbox_disabled?(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> true
+      "danger-full-access" -> true
+      _ -> false
+    end
+  end
+
+  defp default_turn_sandbox_disabled?(_value), do: true
 
   defp default_turn_sandbox_policy(workspace) do
     %{

@@ -103,6 +103,20 @@ defmodule SymphonyElixir.Linear.Client do
   }
   """
 
+  @project_summary_query """
+  query SymphonyLinearProjectSummary($projectSlug: String!) {
+    projects(filter: {slugId: {eq: $projectSlug}}, first: 1) {
+      nodes {
+        name
+        slugId
+        url
+      }
+    }
+  }
+  """
+
+  @project_summary_cache_key {__MODULE__, :project_summary_cache}
+
   @spec fetch_candidate_issues() :: {:ok, [Issue.t()]} | {:error, term()}
   def fetch_candidate_issues do
     tracker = Config.settings!().tracker
@@ -157,6 +171,25 @@ defmodule SymphonyElixir.Linear.Client do
         with {:ok, assignee_filter} <- routing_assignee_filter() do
           do_fetch_issue_states(ids, assignee_filter)
         end
+    end
+  end
+
+  @spec project_summary() :: map()
+  def project_summary do
+    tracker = Config.settings!().tracker
+    project_slug = tracker.project_slug
+    fallback = fallback_project_summary(project_slug)
+    cache_key = {tracker.endpoint, project_slug}
+
+    cond do
+      not is_binary(project_slug) or String.trim(project_slug) == "" ->
+        fallback
+
+      is_nil(tracker.api_key) ->
+        fallback
+
+      true ->
+        fetch_cached_project_summary(cache_key, fallback)
     end
   end
 
@@ -236,8 +269,72 @@ defmodule SymphonyElixir.Linear.Client do
     end
   end
 
+  @doc false
+  @spec project_summary_for_test(
+          String.t() | nil,
+          (String.t(), map() -> {:ok, map()} | {:error, term()})
+        ) :: map()
+  def project_summary_for_test(project_slug, graphql_fun)
+      when is_function(graphql_fun, 2) do
+    fallback = fallback_project_summary(project_slug)
+
+    case fetch_project_summary(project_slug, graphql_fun) do
+      {:ok, summary} -> summary
+      {:error, _reason} -> fallback
+    end
+  end
+
   defp do_fetch_by_states(project_slug, state_names, assignee_filter) do
     do_fetch_by_states_page(project_slug, state_names, assignee_filter, nil, [])
+  end
+
+  defp fetch_cached_project_summary(cache_key, fallback) do
+    cache = Application.get_env(:symphony_elixir, @project_summary_cache_key, %{})
+
+    case Map.get(cache, cache_key) do
+      %{} = summary ->
+        summary
+
+      _ ->
+        case fetch_project_summary(fallback.slug, &graphql/2) do
+          {:ok, summary} ->
+            Application.put_env(
+              :symphony_elixir,
+              @project_summary_cache_key,
+              Map.put(cache, cache_key, summary)
+            )
+
+            summary
+
+          {:error, _reason} ->
+            fallback
+        end
+    end
+  end
+
+  defp fetch_project_summary(project_slug, _graphql_fun)
+       when not is_binary(project_slug) or byte_size(String.trim(project_slug)) == 0 do
+    {:error, :missing_linear_project_slug}
+  end
+
+  defp fetch_project_summary(project_slug, graphql_fun) when is_function(graphql_fun, 2) do
+    case graphql_fun.(@project_summary_query, %{projectSlug: project_slug}) do
+      {:ok,
+       %{
+         "data" => %{
+           "projects" => %{
+             "nodes" => [%{} = project | _]
+           }
+         }
+       }} ->
+        {:ok, normalize_project_summary(project, project_slug)}
+
+      {:ok, _body} ->
+        {:error, :missing_linear_project}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp do_fetch_by_states_page(project_slug, state_names, assignee_filter, after_cursor, acc_issues) do
@@ -444,6 +541,42 @@ defmodule SymphonyElixir.Linear.Client do
 
   defp next_page_cursor(%{has_next_page: true}), do: {:error, :linear_missing_end_cursor}
   defp next_page_cursor(_), do: :done
+
+  defp normalize_project_summary(project, configured_slug) when is_map(project) do
+    slug = normalize_summary_string(project["slugId"]) || normalize_summary_string(configured_slug)
+
+    %{
+      kind: "linear",
+      slug: slug,
+      name: normalize_summary_string(project["name"]),
+      url: normalize_summary_string(project["url"]) || linear_project_url(slug)
+    }
+  end
+
+  defp fallback_project_summary(project_slug) do
+    slug = normalize_summary_string(project_slug)
+
+    %{
+      kind: "linear",
+      slug: slug,
+      name: nil,
+      url: linear_project_url(slug)
+    }
+  end
+
+  defp linear_project_url(project_slug) when is_binary(project_slug),
+    do: "https://linear.app/project/#{project_slug}/issues"
+
+  defp linear_project_url(_project_slug), do: nil
+
+  defp normalize_summary_string(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp normalize_summary_string(_value), do: nil
 
   defp normalize_issue(issue, assignee_filter) when is_map(issue) do
     assignee = issue["assignee"]

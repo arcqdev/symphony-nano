@@ -184,6 +184,45 @@ pre,
   font-size: 1rem;
 }
 
+.hero-project-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+  margin-top: 1rem;
+}
+
+.hero-project-label {
+  display: inline-flex;
+  align-items: center;
+  min-height: 1.9rem;
+  padding: 0.25rem 0.68rem;
+  border-radius: 999px;
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: 0.76rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.hero-project-link {
+  color: var(--ink);
+  font-weight: 600;
+  text-decoration: none;
+  text-underline-offset: 0.16em;
+}
+
+.hero-project-link:hover,
+.hero-project-link:focus-visible {
+  color: var(--accent-ink);
+  text-decoration: underline;
+}
+
+.hero-project-link-static {
+  cursor: default;
+}
+
 .status-stack {
   display: grid;
   justify-items: end;

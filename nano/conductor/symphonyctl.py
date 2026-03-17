@@ -17,6 +17,7 @@ DEFAULT_REGISTRY_PATH = LOCAL_CONFIG_DIR / "symphony-registry.json"
 EXAMPLE_REGISTRY_PATH = NANO_ROOT / "conductor" / "symphony-registry.example.json"
 STATE_DIR = NANO_ROOT / ".runtime"
 BIN_PATH = REPO_ROOT / "elixir" / "bin" / "symphony"
+ELIXIR_ROOT = REPO_ROOT / "elixir"
 
 
 def load_linear_api_key_from_zshrc() -> str | None:
@@ -147,10 +148,6 @@ def ensure(project: str) -> int:
         print_json({"ok": False, "error": f"Unknown project: {project}"})
         return 1
 
-    if not BIN_PATH.exists():
-        print_json({"ok": False, "error": f"Missing binary: {BIN_PATH}"})
-        return 1
-
     workflow_path = Path(project_entry["workflowPath"]).expanduser()
     port = project_entry.get("port")
     project_slug = project_entry.get("projectSlug")
@@ -181,12 +178,8 @@ def ensure(project: str) -> int:
 
     with log_path.open("ab") as logf:
         proc = subprocess.Popen(
-            [
-                str(BIN_PATH),
-                "--i-understand-that-this-will-be-running-without-the-usual-guardrails",
-                str(workflow_path),
-            ],
-            cwd=REPO_ROOT / "elixir",
+            boot_command(workflow_path),
+            cwd=ELIXIR_ROOT,
             stdout=logf,
             stderr=subprocess.STDOUT,
             start_new_session=True,
@@ -236,6 +229,29 @@ def missing_registry_message() -> str:
         f"{EXAMPLE_REGISTRY_PATH} to {registry_path()} and fill in your local project paths, "
         "or set SYMPHONY_REGISTRY_PATH."
     )
+
+
+def boot_command(workflow_path: Path) -> list[str]:
+    workflow = str(workflow_path)
+
+    # Launch via `mix run --no-start` instead of the generated escript.
+    # On the current local toolchain the escript can be generated with a corrupt main module header,
+    # while the direct CLI entrypoint remains reliable.
+    return [
+        "mise",
+        "exec",
+        "--",
+        "mix",
+        "run",
+        "--no-start",
+        "-e",
+        (
+            "SymphonyElixir.CLI.main(["
+            "\"--i-understand-that-this-will-be-running-without-the-usual-guardrails\", "
+            f"\"{workflow}\""
+            "])"
+        ),
+    ]
 
 
 def build_parser() -> argparse.ArgumentParser:

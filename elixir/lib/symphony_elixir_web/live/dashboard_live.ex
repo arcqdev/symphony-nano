@@ -54,6 +54,25 @@ defmodule SymphonyElixirWeb.DashboardLive do
             <p class="hero-copy">
               Current state, retry pressure, token usage, and orchestration health for the active Symphony runtime.
             </p>
+            <%= if tracker_project_label(@payload) do %>
+              <div class="hero-project-row">
+                <span class="hero-project-label"><%= tracker_kind_label(@payload) %> project</span>
+                <%= if @payload.tracker.project.url do %>
+                  <a
+                    class="hero-project-link"
+                    href={@payload.tracker.project.url}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    <%= tracker_project_label(@payload) %>
+                  </a>
+                <% else %>
+                  <span class="hero-project-link hero-project-link-static">
+                    <%= tracker_project_label(@payload) %>
+                  </span>
+                <% end %>
+              </div>
+            <% end %>
           </div>
 
           <div class="status-stack">
@@ -253,6 +272,20 @@ defmodule SymphonyElixirWeb.DashboardLive do
   defp load_payload do
     ObservabilitySurface.state_payload(orchestrator(), snapshot_timeout_ms())
   end
+
+  defp tracker_project_label(%{tracker: %{project: project}}) when is_map(project) do
+    project[:name] || project[:slug]
+  end
+
+  defp tracker_project_label(_payload), do: nil
+
+  defp tracker_kind_label(%{tracker: %{kind: kind}}) when is_binary(kind) do
+    kind
+    |> String.trim()
+    |> String.capitalize()
+  end
+
+  defp tracker_kind_label(_payload), do: "Tracker"
 
   defp orchestrator do
     Endpoint.config(:orchestrator) || SymphonyElixir.Orchestrator

@@ -42,7 +42,7 @@ Symphony stops the active agent for that issue and cleans up matching workspaces
    - To get your project's slug, right-click the project and copy its URL. The slug is part of the
      URL.
    - When creating a workflow based on this repo, note that it depends on non-standard Linear
-     issue statuses: "Rework" and "BLOCKED - requires human". You can customize them in
+     issue statuses: "Rework", "Human Review", and "Merging". You can customize them in
      Team Settings → Workflow in Linear.
 6. Follow the instructions below to install the required runtime dependencies and start the service.
 
@@ -92,9 +92,6 @@ Minimal example:
 tracker:
   kind: linear
   project_slug: "..."
-  # For deterministic local testing, set:
-  # kind: stub
-  # and omit api_key; project_slug still filters intake.
 workspace:
   root: ~/code/workspaces
 hooks:
@@ -111,8 +108,6 @@ acp:
   backends:
     claude-code:
       command: claude-agent-acp
-      env:
-        CLAUDE_CODE_EXECUTABLE: ~/.local/bin/claude
 ---
 
 You are working on a Linear issue {{ issue.identifier }}.
@@ -131,13 +126,12 @@ Notes:
 - `agent.stage_reasoning_efforts` optionally overrides Codex reasoning effort per routed stage.
 - Symphony ships with a default ACP backend entry for `claude-code` using
   `claude-agent-acp`.
-- When using Claude Code through ACP, set
-  `acp.backends.claude-code.env.CLAUDE_CODE_EXECUTABLE: ~/.local/bin/claude` so
-  `claude-agent-acp` launches the authenticated local Claude CLI binary.
-- Safer Codex defaults are used when policy fields are omitted:
-  - `codex.approval_policy` defaults to `{"reject":{"sandbox_approval":true,"rules":true,"mcp_elicitations":true}}`
-  - `codex.thread_sandbox` defaults to `workspace-write`
-  - `codex.turn_sandbox_policy` defaults to a `workspaceWrite` policy rooted at the current issue workspace
+- No Codex sandbox is applied by default:
+  - `codex.approval_policy` defaults to `never`
+  - `codex.thread_sandbox` defaults to omitted
+  - `codex.turn_sandbox_policy` defaults to omitted
+  - if you explicitly set a more restrictive `codex.thread_sandbox` and omit `codex.turn_sandbox_policy`,
+    Symphony falls back to a `workspaceWrite` policy rooted at the current issue workspace
 - ACP defaults are used when fields are omitted:
   - `acp.turn_timeout_ms` defaults to `3600000`
   - `acp.read_timeout_ms` defaults to `5000`
@@ -159,8 +153,13 @@ Notes:
   invocation when a turn completes normally but the issue is still in an active state. Default: `20`.
 - `agent.max_input_tokens` and `agent.max_output_tokens` set cumulative token budgets per issue
   across all turns and retries. When either limit is exceeded mid-turn, the agent process is killed
-  immediately, the issue is moved to `BLOCKED - requires human`, and a Linear comment is posted with the
-  budget details. Defaults: `4000000` input, `400000` output. Set to `null` to disable either cap.
+  immediately, the issue is moved to `tracker.human_review_state` when configured, otherwise the
+  first configured tracker state containing `human`, otherwise `Human Review`, and a Linear comment
+  is posted with the budget details. Defaults: `4000000` input, `400000` output. Set to `null` to
+  disable either cap.
+- `tracker.human_review_state` optionally sets the tracker state used by automatic safeguards such
+  as token-budget kills. Use this when your Linear workflow uses a non-default human intervention
+  state name.
 - If the Markdown body is blank, Symphony uses a default prompt template that includes the issue
   identifier, title, and body.
 - Use `hooks.after_create` to bootstrap a fresh workspace. For a Git-backed repo, you can run
@@ -168,12 +167,6 @@ Notes:
 - If a hook needs `mise exec` inside a freshly cloned workspace, trust the repo config and fetch
   the project dependencies in `hooks.after_create` before invoking `mise` later from other hooks.
 - `tracker.api_key` reads from `LINEAR_API_KEY` when unset or when value is `$LINEAR_API_KEY`.
-- `tracker.kind: stub` uses the in-process stub channel for deterministic e2e and local replay.
-  Stub mode ignores `tracker.api_key`, keeps all issue payloads in-memory, and honors
-  `tracker.project_slug` filtering so tests can target the active execution project.
-- In stub mode, connector traffic can be injected through:
-  - `POST /api/v1/stub/intake` with JSON issue payloads (`id` or `identifier`, `title`, optional
-    metadata).
 - For path values, `~` is expanded to the home directory.
 - For env-backed path values, use `$VAR`. `workspace.root` resolves `$VAR` before path handling,
   while `codex.command` stays a shell command string and any `$VAR` expansion there happens in the
@@ -195,7 +188,6 @@ acp:
     claude-code:
       command: "$CLAUDE_ACP_BIN"
       env:
-        CLAUDE_CODE_EXECUTABLE: ~/.local/bin/claude
         ANTHROPIC_CONFIG_DIR: $ANTHROPIC_CONFIG_DIR
 ```
 
@@ -203,8 +195,7 @@ acp:
 - If a later reload fails, Symphony keeps running with the last known good workflow and logs the
   reload error until the file is fixed.
 - `server.port` or CLI `--port` enables the optional Phoenix LiveView dashboard and JSON API at
-  `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, `/api/v1/refresh`, and
-  `/api/v1/stub/intake` for deterministic stub-channel submission.
+  `/`, `/api/v1/state`, `/api/v1/<issue_identifier>`, and `/api/v1/refresh`.
 
 ## Web dashboard
 
@@ -226,14 +217,6 @@ The observability UI now runs on a minimal Phoenix stack:
 
 ```bash
 make all
-```
-
-Run the deterministic stub-channel end-to-end test without external tracker credentials for fast local loop checks:
-
-```bash
-cd elixir
-MIX_ENV=test mix test test/symphony_elixir/stub_e2e_test.exs
-MIX_ENV=test mix test test/symphony_elixir/tracker_stub_test.exs
 ```
 
 Run the real external end-to-end test only when you want Symphony to create disposable Linear
