@@ -1086,43 +1086,9 @@ Unsupported dynamic tool calls:
 Optional client-side tool extension:
 
 - An implementation may expose a limited set of client-side tools to the app-server session.
-- Current optional standardized tool: `linear_graphql`.
 - If implemented, supported tools should be advertised to the app-server session during startup
   using the protocol mechanism supported by the targeted Codex app-server version.
 - Unsupported tool names should still return a failure result and continue the session.
-
-`linear_graphql` extension contract:
-
-- Purpose: execute a raw GraphQL query or mutation against Linear using Symphony's configured
-  tracker auth for the current session.
-- Availability: only meaningful when `tracker.kind == "linear"` and valid Linear auth is configured.
-- Preferred input shape:
-
-  ```json
-  {
-    "query": "single GraphQL query or mutation document",
-    "variables": {
-      "optional": "graphql variables object"
-    }
-  }
-  ```
-
-- `query` must be a non-empty string.
-- `query` must contain exactly one GraphQL operation.
-- `variables` is optional and, when present, must be a JSON object.
-- Implementations may additionally accept a raw GraphQL query string as shorthand input.
-- Execute one GraphQL operation per tool call.
-- If the provided document contains multiple operations, reject the tool call as invalid input.
-- `operationName` selection is intentionally out of scope for this extension.
-- Reuse the configured Linear endpoint and auth from the active Symphony workflow/runtime config; do
-  not require the coding agent to read raw tokens from disk.
-- Tool result semantics:
-  - transport success + no top-level GraphQL `errors` -> `success=true`
-  - top-level GraphQL `errors` present -> `success=false`, but preserve the GraphQL response body
-    for debugging
-  - invalid input, missing auth, or transport failure -> `success=false` with an error payload
-- Return the GraphQL response or error payload as structured tool output that the model can inspect
-  in-session.
 
 Illustrative responses (equivalent payload shapes are acceptable if they preserve the same outcome):
 
@@ -1250,8 +1216,8 @@ Symphony does not require first-class tracker write APIs in the orchestrator.
 - The service remains a scheduler/runner and tracker reader.
 - Workflow-specific success often means "reached the next handoff state" (for example
   `BLOCKED - requires human`) rather than tracker terminal state `Done`.
-- If the optional `linear_graphql` client-side tool extension is implemented, it is still part of
-  the agent toolchain rather than orchestrator business logic.
+- If optional client-side tools are implemented, they are still part of the agent toolchain rather
+  than orchestrator business logic.
 
 ## 12. Prompt Construction and Context Assembly
 
@@ -2054,11 +2020,8 @@ Unless otherwise noted, Sections 17.1 through 17.7 are `Core Conformance`. Bulle
   telemetry are accepted when they preserve the same logical meaning
 - If optional client-side tools are implemented, the startup handshake advertises the supported tool
   specs required for discovery by the targeted app-server version
-- If the optional `linear_graphql` client-side tool extension is implemented:
-  - the tool is advertised to the session
-  - valid `query` / `variables` inputs execute against configured Linear auth
-  - top-level GraphQL `errors` produce `success=false` while preserving the GraphQL body
-  - invalid arguments, missing auth, and transport failures return structured failure payloads
+- If optional client-side tools are implemented:
+  - the supported tools are advertised to the session
   - unsupported tool names still fail without stalling the session
 
 ### 17.6 Observability
@@ -2127,8 +2090,8 @@ Use the same validation profiles as Section 17:
 
 - Optional HTTP server honors CLI `--port` over `server.port`, uses a safe default bind host, and
   exposes the baseline endpoints/error semantics in Section 13.7 if shipped.
-- Optional `linear_graphql` client-side tool extension exposes raw Linear GraphQL access through the
-  app-server session using configured Symphony auth.
+- Optional client-side tools may expose harness-local helper actions through the app-server
+  session when a repository chooses to ship them.
 - TODO: Persist retry queue and session metadata across process restarts.
 - TODO: Make observability settings configurable in workflow front matter without prescribing UI
   implementation details.

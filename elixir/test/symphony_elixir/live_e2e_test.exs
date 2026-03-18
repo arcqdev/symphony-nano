@@ -320,60 +320,36 @@ defmodule SymphonyElixir.LiveE2ETest do
     project_slug=#{project_slug}
 
     Step 2:
-    You must use the `linear_graphql` tool to query the current issue by `{{ issue.id }}` and read:
+    You must use the local `linear` CLI to inspect the current issue and read:
     - existing comments
-    - team workflow states
+    - the issue state information needed to move the issue to a completed state
 
     A turn that only creates the file is incomplete. Do not stop after Step 1.
 
     If the exact comment body below is not already present, post exactly one comment on the current issue with this exact body:
     #{expected_comment("{{ issue.identifier }}", project_slug)}
 
-    Use these exact GraphQL operations:
+    Use only narrow `linear` commands. Do not use raw GraphQL or broad list operations.
 
-    ```graphql
-    query IssueContext($id: String!) {
-      issue(id: $id) {
-        comments(first: 20) {
-          nodes {
-            body
-          }
-        }
-        team {
-          states(first: 50) {
-            nodes {
-              id
-              name
-              type
-            }
-          }
-        }
-      }
-    }
+    ```sh
+    linear issue view {{ issue.identifier }} --json
+    linear issue comment list {{ issue.identifier }}
     ```
 
-    ```graphql
-    mutation AddComment($issueId: String!, $body: String!) {
-      commentCreate(input: {issueId: $issueId, body: $body}) {
-        success
-      }
-    }
+    ```sh
+    linear issue comment add {{ issue.identifier }} --body-file /tmp/comment.md
     ```
 
     Step 3:
-    Use the same issue-context query result to choose a workflow state whose `type` is `completed`.
-    Then move the current issue to that state with this exact mutation:
+    Use the issue context to choose a completed workflow state.
+    Then move the current issue to that state with the local `linear` CLI.
 
-    ```graphql
-    mutation CompleteIssue($id: String!, $stateId: String!) {
-      issueUpdate(id: $id, input: {stateId: $stateId}) {
-        success
-      }
-    }
+    ```sh
+    linear issue update {{ issue.identifier }} -s "Done"
     ```
 
     Step 4:
-    Verify all outcomes with one final `linear_graphql` query against `{{ issue.id }}`:
+    Verify all outcomes with one final `linear issue view {{ issue.identifier }} --json` call:
     - the exact comment body is present
     - the issue state type is `completed`
 

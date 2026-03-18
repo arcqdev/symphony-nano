@@ -247,7 +247,8 @@ Use this only when completion is blocked by missing required tools or missing au
     - Check off completed items.
     - Add newly discovered items in the appropriate section.
     - Keep parent/child structure intact as scope evolves.
-    - Update the workpad immediately after each meaningful milestone (for example: reproduction complete, code change landed, validation run, review feedback addressed).
+    - Do not update the workpad after every checklist item or small milestone.
+    - Complete the current stage first, then make one compact workpad rewrite covering the stage outcome, validation status, blockers, and next step.
     - Never leave completed work unchecked in the plan.
 5.  Run validation/tests required for the scope.
     - Mandatory gate: execute all ticket-provided `Validation`/`Test Plan`/ `Testing` requirements when present; treat unmet items as incomplete work.
@@ -317,6 +318,7 @@ Use this only when completion is blocked by missing required tools or missing au
 - In `BLOCKED - requires human`, do not make changes; wait for an unblock signal.
 - If state is terminal (`Done`), do nothing and shut down.
 - Keep issue text concise, specific, and reviewer-oriented.
+- Keep workpad rewrites compact. Prefer one update per completed stage over frequent partial updates.
 - If blocked and no workpad exists yet, add one blocker comment describing blocker, impact, and next unblock action.
 
 ## Workpad template

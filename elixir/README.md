@@ -22,9 +22,6 @@ This directory contains the current Elixir/OTP implementation of Symphony, based
 Codex runs in [App Server mode](https://developers.openai.com/codex/app-server/). ACP-backed
 agents such as Claude Code are launched over stdio via a generic ACP adapter.
 
-During Codex app-server sessions, Symphony also serves a client-side `linear_graphql` tool so that
-repo skills can make raw Linear GraphQL calls.
-
 If a claimed issue moves to a terminal state (`Done`, `Closed`, `Cancelled`, or `Duplicate`),
 Symphony stops the active agent for that issue and cleans up matching workspaces.
 
@@ -36,8 +33,9 @@ Symphony stops the active agent for that issue and cleans up matching workspaces
    set it as the `LINEAR_API_KEY` environment variable.
 3. Copy this directory's `WORKFLOW.md` to your repo.
 4. Optionally copy the `commit`, `push`, `pull`, `land`, and `linear` skills to your repo.
-   - The `linear` skill expects Symphony's `linear_graphql` app-server tool for raw Linear GraphQL
-     operations such as comment editing or upload flows.
+   - The `linear` skill is the default agent-facing Linear path in this repo.
+   - Keep the allowed command surface narrow and update `../LINEAR_GUIDELINES.md` and the
+     skill together when you need more Linear functionality.
 5. Customize the copied `WORKFLOW.md` file for your project.
    - To get your project's slug, right-click the project and copy its URL. The slug is part of the
      URL.
@@ -159,11 +157,15 @@ Notes:
   disable either cap.
 - `tracker.human_review_state` optionally sets the tracker state used by automatic safeguards such
   as token-budget kills. Use this when your Linear workflow uses a non-default human intervention
-  state name.
+  state name. Symphony always treats that state as non-active for candidate fetching and dispatch,
+  even if it also appears under `tracker.active_states`.
 - If the Markdown body is blank, Symphony uses a default prompt template that includes the issue
   identifier, title, and body.
 - Use `hooks.after_create` to bootstrap a fresh workspace. For a Git-backed repo, you can run
   `git clone ... .` there, along with any other setup commands you need.
+- Use `hooks.before_run` for refresh logic that must run every attempt in a reused issue
+  workspace, such as rebasing or resetting that workspace onto the latest `main` before the agent
+  continues.
 - If a hook needs `mise exec` inside a freshly cloned workspace, trust the repo config and fetch
   the project dependencies in `hooks.after_create` before invoking `mise` later from other hooks.
 - `tracker.api_key` reads from `LINEAR_API_KEY` when unset or when value is `$LINEAR_API_KEY`.
