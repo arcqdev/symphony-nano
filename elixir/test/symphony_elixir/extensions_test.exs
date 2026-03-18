@@ -94,7 +94,9 @@ defmodule SymphonyElixir.ExtensionsTest do
 
   setup do
     linear_client_module = Application.get_env(:symphony_elixir, :linear_client_module)
-    fake_project_summary = Application.get_env(:symphony_elixir, {FakeLinearClient, :project_summary})
+
+    fake_project_summary =
+      Application.get_env(:symphony_elixir, {FakeLinearClient, :project_summary})
 
     on_exit(fn ->
       if is_nil(linear_client_module) do
@@ -106,7 +108,11 @@ defmodule SymphonyElixir.ExtensionsTest do
       if is_nil(fake_project_summary) do
         Application.delete_env(:symphony_elixir, {FakeLinearClient, :project_summary})
       else
-        Application.put_env(:symphony_elixir, {FakeLinearClient, :project_summary}, fake_project_summary)
+        Application.put_env(
+          :symphony_elixir,
+          {FakeLinearClient, :project_summary},
+          fake_project_summary
+        )
       end
     end)
 
@@ -214,8 +220,22 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_candidate_issues()
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issues_by_states([" in progress ", 42])
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issue_states_by_ids(["issue-1"])
-    assert SymphonyElixir.Tracker.project_summary() == %{kind: "memory", slug: "project", name: nil, url: nil}
+
+    assert SymphonyElixir.Tracker.project_summary() == %{
+             kind: "memory",
+             slug: "project",
+             name: nil,
+             url: nil
+           }
+
     assert :ok = SymphonyElixir.Tracker.create_comment("issue-1", "comment")
+
+    assert {:error, :unsupported_tracker_operation} =
+             SymphonyElixir.Tracker.fetch_active_workpad("issue-1")
+
+    assert {:error, :unsupported_tracker_operation} =
+             SymphonyElixir.Tracker.upsert_active_workpad("issue-1", "workpad body")
+
     assert :ok = SymphonyElixir.Tracker.update_issue_state("issue-1", "Done")
     assert_receive {:memory_tracker_comment, "issue-1", "comment"}
     assert_receive {:memory_tracker_state_update, "issue-1", "Done"}
@@ -252,11 +272,21 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_candidate_issues()
     assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issues_by_states(["todo"])
-    assert {:ok, [^issue]} = SymphonyElixir.Tracker.fetch_issue_states_by_ids(["stub-memory-issue"])
+
+    assert {:ok, [^issue]} =
+             SymphonyElixir.Tracker.fetch_issue_states_by_ids(["stub-memory-issue"])
 
     assert :ok = Stub.create_comment("stub-memory-issue", "delegated comment")
     assert_receive {:stub_tracker_comment, "stub-memory-issue", "delegated comment"}
     assert Stub.comments_for_test("stub-memory-issue") == ["delegated comment"]
+
+    assert {:ok, nil} = SymphonyElixir.Tracker.fetch_active_workpad("stub-memory-issue")
+
+    assert {:ok, %{"id" => "stub-workpad-stub-memory-issue", "body" => "delegated workpad"}} =
+             SymphonyElixir.Tracker.upsert_active_workpad(
+               "stub-memory-issue",
+               "delegated workpad"
+             )
 
     assert :ok = Stub.update_issue_state("stub-memory-issue", "Done")
     assert Stub.issue_for_test("stub-memory-issue").state == "Done"
@@ -318,6 +348,121 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     Process.put({FakeLinearClient, :graphql_result}, :unexpected)
     assert {:error, :comment_create_failed} = Adapter.create_comment("issue-1", "odd")
+    flush_graphql_messages()
+
+    Process.put(
+      {FakeLinearClient, :graphql_result},
+      {:ok,
+       %{
+         "data" => %{
+           "issue" => %{
+             "comments" => %{
+               "nodes" => [
+                 %{
+                   "id" => "comment-1",
+                   "body" => "## Codex Workpad\n\nExisting workpad",
+                   "createdAt" => "2026-03-17T00:00:00Z",
+                   "updatedAt" => "2026-03-17T00:00:00Z",
+                   "resolvedAt" => nil,
+                   "url" => "https://linear.app/comment-1"
+                 }
+               ]
+             }
+           }
+         }
+       }}
+    )
+
+    assert {:ok,
+            %{
+              "id" => "comment-1",
+              "body" => "## Codex Workpad\n\nExisting workpad",
+              "url" => "https://linear.app/comment-1"
+            }} =
+             Adapter.fetch_active_workpad("issue-1")
+
+    assert_receive {:graphql_called, workpad_lookup_query, %{issueId: "issue-1"}}
+    assert workpad_lookup_query =~ "comments"
+
+    Process.put(
+      {FakeLinearClient, :graphql_results},
+      [
+        {:ok,
+         %{
+           "data" => %{
+             "issue" => %{
+               "comments" => %{
+                 "nodes" => []
+               }
+             }
+           }
+         }},
+        {:ok,
+         %{
+           "data" => %{
+             "commentCreate" => %{
+               "success" => true,
+               "comment" => %{
+                 "id" => "comment-2",
+                 "body" => "## Codex Workpad\n\nNew",
+                 "createdAt" => "2026-03-17T00:00:00Z",
+                 "updatedAt" => "2026-03-17T00:00:00Z",
+                 "resolvedAt" => nil,
+                 "url" => "https://linear.app/comment-2"
+               }
+             }
+           }
+         }}
+      ]
+    )
+
+    assert {:ok,
+            %{
+              "id" => "comment-2",
+              "body" => "## Codex Workpad\n\nNew",
+              "url" => "https://linear.app/comment-2"
+            }} =
+             Adapter.upsert_active_workpad("issue-1", "## Codex Workpad\n\nNew")
+
+    assert_receive {:graphql_called, _, %{issueId: "issue-1"}}
+
+    assert_receive {:graphql_called, create_workpad_query,
+                    %{body: "## Codex Workpad\n\nNew", issueId: "issue-1"}}
+
+    assert create_workpad_query =~ "commentCreate"
+
+    Process.put(
+      {FakeLinearClient, :graphql_result},
+      {:ok,
+       %{
+         "data" => %{
+           "commentUpdate" => %{
+             "success" => true,
+             "comment" => %{
+               "id" => "comment-3",
+               "body" => "## Codex Workpad\n\nUpdated",
+               "createdAt" => "2026-03-17T00:00:00Z",
+               "updatedAt" => "2026-03-17T00:01:00Z",
+               "resolvedAt" => nil,
+               "url" => "https://linear.app/comment-3"
+             }
+           }
+         }
+       }}
+    )
+
+    assert {:ok,
+            %{
+              "id" => "comment-3",
+              "body" => "## Codex Workpad\n\nUpdated",
+              "url" => "https://linear.app/comment-3"
+            }} =
+             Adapter.upsert_active_workpad("issue-1", "## Codex Workpad\n\nUpdated", "comment-3")
+
+    assert_receive {:graphql_called, update_workpad_query,
+                    %{body: "## Codex Workpad\n\nUpdated", commentId: "comment-3"}}
+
+    assert update_workpad_query =~ "commentUpdate"
 
     Process.put(
       {FakeLinearClient, :graphql_results},
@@ -336,7 +481,8 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert_receive {:graphql_called, state_lookup_query, %{issueId: "issue-1", stateName: "Done"}}
     assert state_lookup_query =~ "states"
 
-    assert_receive {:graphql_called, update_issue_query, %{issueId: "issue-1", stateId: "state-1"}}
+    assert_receive {:graphql_called, update_issue_query,
+                    %{issueId: "issue-1", stateId: "state-1"}}
 
     assert update_issue_query =~ "issueUpdate"
 
@@ -392,6 +538,14 @@ defmodule SymphonyElixir.ExtensionsTest do
     )
 
     assert {:error, :issue_update_failed} = Adapter.update_issue_state("issue-1", "Odd")
+  end
+
+  defp flush_graphql_messages do
+    receive do
+      {:graphql_called, _, _} -> flush_graphql_messages()
+    after
+      0 -> :ok
+    end
   end
 
   test "phoenix observability api preserves state, issue, and refresh responses" do
@@ -450,7 +604,8 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "turn_count" => 7,
                  "last_event" => "notification",
                  "last_message" => "rendered",
-                 "started_at" => state_payload["running"] |> List.first() |> Map.fetch!("started_at"),
+                 "started_at" =>
+                   state_payload["running"] |> List.first() |> Map.fetch!("started_at"),
                  "last_event_at" => nil,
                  "stage" => nil,
                  "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
@@ -587,7 +742,10 @@ defmodule SymphonyElixir.ExtensionsTest do
 
   test "stub intake endpoint validates required payload for stub tracker mode" do
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "stub")
-    start_test_endpoint(orchestrator: Module.concat(__MODULE__, :StubIntakeValidationOrchestrator))
+
+    start_test_endpoint(
+      orchestrator: Module.concat(__MODULE__, :StubIntakeValidationOrchestrator)
+    )
 
     assert json_response(
              post(build_conn(), "/api/v1/stub/intake", %{
@@ -788,7 +946,9 @@ defmodule SymphonyElixir.ExtensionsTest do
       snapshot_timeout_ms: 50
     ]
 
-    start_supervised!({StaticOrchestrator, name: orchestrator_name, snapshot: snapshot, refresh: refresh})
+    start_supervised!(
+      {StaticOrchestrator, name: orchestrator_name, snapshot: snapshot, refresh: refresh}
+    )
 
     start_supervised!({HttpServer, server_opts})
 

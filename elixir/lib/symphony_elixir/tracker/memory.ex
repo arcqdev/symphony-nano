@@ -54,6 +54,14 @@ defmodule SymphonyElixir.Tracker.Memory do
     :ok
   end
 
+  @spec fetch_active_workpad(String.t()) :: {:ok, map() | nil} | {:error, term()}
+  def fetch_active_workpad(_issue_id), do: {:error, :unsupported_tracker_operation}
+
+  @spec upsert_active_workpad(String.t(), String.t(), String.t() | nil) ::
+          {:ok, map()} | {:error, term()}
+  def upsert_active_workpad(_issue_id, _body, _comment_id \\ nil),
+    do: {:error, :unsupported_tracker_operation}
+
   @spec update_issue_state(String.t(), String.t()) :: :ok | {:error, term()}
   def update_issue_state(issue_id, state_name) do
     send_event({:memory_tracker_state_update, issue_id, state_name})

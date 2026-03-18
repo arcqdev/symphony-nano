@@ -69,8 +69,10 @@ defmodule SymphonyElixir.Tracker.Stub do
     {:ok, workpad}
   end
 
-  @spec upsert_active_workpad(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
-  def upsert_active_workpad(issue_id, body) when is_binary(issue_id) and is_binary(body) do
+  @spec upsert_active_workpad(String.t(), String.t(), String.t() | nil) ::
+          {:ok, map()} | {:error, term()}
+  def upsert_active_workpad(issue_id, body, comment_id \\ nil)
+      when is_binary(issue_id) and is_binary(body) do
     now = DateTime.utc_now() |> DateTime.to_iso8601()
 
     workpads = Application.get_env(:symphony_elixir, @workpad_key, %{})
@@ -78,7 +80,7 @@ defmodule SymphonyElixir.Tracker.Stub do
     existing = Map.get(workpads, issue_id)
 
     workpad = %{
-      "id" => (existing && existing["id"]) || "stub-workpad-#{issue_id}",
+      "id" => comment_id || (existing && existing["id"]) || "stub-workpad-#{issue_id}",
       "body" => body,
       "createdAt" => (existing && existing["createdAt"]) || now,
       "updatedAt" => now,

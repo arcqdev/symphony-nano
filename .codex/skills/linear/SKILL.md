@@ -31,6 +31,7 @@ blocked instead of assuming access.
 - Use `linear issue view <identifier> --json` when you need structured issue data.
 - Use `linear issue comment list <identifier>` only when you need to find or reuse the single workpad comment.
 - Prefer `--description-file` and `--body-file` for multi-line markdown.
+- When `sync_workpad` is available in the current runtime, use it for workpad body syncs instead of sending large inline comment-update payloads.
 - Use one narrow command at a time instead of broad list operations.
 - Update the workpad once per completed stage with one compact rewrite.
 - Do not post or edit Linear comments for every checklist item or small milestone.
@@ -50,6 +51,19 @@ linear issue update ENG-123 -s "In Progress"
 linear issue update ENG-123 -s "Done"
 ```
 
+When available, prefer this dynamic tool for workpad syncs:
+
+```text
+sync_workpad(issue_id, file_path, comment_id?)
+```
+
+Recommended flow:
+
+- use `linear issue comment list <identifier>` once to find or confirm the single workpad comment ID
+- write the full workpad markdown to a file inside the issue workspace
+- call `sync_workpad` with the Linear issue ID and that file path
+- only fall back to `linear issue comment add/update --body-file` when the dynamic tool is unavailable
+
 The `linear issue view ... --json` output is the source of truth for issue state, assignee, labels,
 and other issue metadata needed for normal repo workflows.
 
@@ -59,6 +73,7 @@ and other issue metadata needed for normal repo workflows.
 - Reuse the existing workpad when present.
 - Rewrite the full workpad body in one compact update after a completed stage, not after each
   checklist item.
+- Prefer file-based sync via `sync_workpad` so workpad rewrites do not bloat the model context.
 - Keep the workpad concise and reviewer-oriented.
 
 ## Symphony-specific guidance

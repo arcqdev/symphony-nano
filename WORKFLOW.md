@@ -111,6 +111,7 @@ The agent should be able to talk to Linear through the local `linear` CLI, authe
 
 - Start by determining the ticket's current status, then follow the matching flow for that status.
 - Start every task by opening the tracking workpad comment and bringing it up to date before doing new implementation work.
+- When the runtime exposes `sync_workpad`, use it for workpad body syncs from a workspace file instead of sending large inline workpad updates.
 - Spend extra effort up front on planning and verification design before implementation.
 - Reproduce first: always confirm the current behavior/issue signal before changing code so the fix target is explicit.
 - Keep ticket metadata current (state, checklist, acceptance criteria, links).
@@ -193,6 +194,7 @@ When stage routing is active, follow these role contracts strictly.
     - If found, reuse that comment; do not create a new workpad comment.
     - If not found, create one workpad comment and use it for all updates.
     - Persist the workpad comment ID and only write progress updates to that ID.
+    - Prefer file-based sync through `sync_workpad(issue.id, file_path, comment_id?)` when the tool is available in-session.
 2.  If arriving from `Todo`, do not delay on additional status transitions: the issue should already be `In Progress` before this step begins.
 3.  Immediately reconcile the workpad before new edits:
     - Check off items that are already done.

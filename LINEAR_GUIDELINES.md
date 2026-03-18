@@ -12,6 +12,7 @@ The current allowed Linear feature set is intentionally narrow:
 - create the single workpad comment when missing
 - update the existing workpad comment in place
 - move the issue between workflow states already used by the repo
+- sync workpad bodies through the dedicated `sync_workpad` dynamic tool when available
 
 ## Allowed command patterns
 
@@ -37,6 +38,8 @@ linear issue update ENG-123 -s "BLOCKED - requires human"
 - Do not update the workpad after every checkbox or minor milestone.
 - Finish the current stage, then write one compact update that reflects the completed stage.
 - Compact updates are full comment rewrites, not differential edits.
+- When the runtime exposes `sync_workpad`, prefer it over inline multi-line comment update payloads.
+- Keep the markdown body in a workspace file, then call `sync_workpad(issue_id, file_path, comment_id?)`.
 - Keep the workpad focused on current status, current plan, validation summary, blockers, and final proof.
 
 ## Scope limits
