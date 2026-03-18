@@ -39,4 +39,13 @@ defmodule SymphonyElixir.HumanReviewStateTest do
     assert_receive {:memory_tracker_comment, "issue-human-state", comment}
     assert comment =~ "token budget exceeded"
   end
+
+  test "effective active states exclude the human review state" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_human_review_state: "BLOCKED - requires human",
+      tracker_active_states: ["Todo", "In Progress", "BLOCKED - requires human"]
+    )
+
+    assert Config.active_states() == ["Todo", "In Progress"]
+  end
 end

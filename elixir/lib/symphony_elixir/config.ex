@@ -197,6 +197,17 @@ defmodule SymphonyElixir.Config do
       "Human Review"
   end
 
+  @spec active_states() :: [String.t()]
+  def active_states do
+    tracker = settings!().tracker
+    human_review = normalize_optional_string(human_review_state())
+
+    tracker.active_states
+    |> List.wrap()
+    |> Enum.filter(&is_binary/1)
+    |> Enum.reject(&(normalize_optional_string(&1) == human_review))
+  end
+
   @spec codex_runtime_settings(Path.t() | nil, keyword()) ::
           {:ok, codex_runtime_settings()} | {:error, term()}
   def codex_runtime_settings(workspace \\ nil, opts \\ []) do

@@ -11,11 +11,6 @@ branch_prefix="${SYMPHONY_WORKTREE_BRANCH_PREFIX:-issue/}"
 issue_branch="${branch_prefix}${issue_id}"
 base_branch="${SYMPHONY_WORKTREE_BASE_BRANCH:-main}"
 
-if [[ -d "${workspace}/.git" ]]; then
-  log "Workspace ${workspace} already contains a git checkout"
-  exit 0
-fi
-
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source_repo_path="${SYMPHONY_SOURCE_REPO_PATH:-$(git -C "${script_dir}" rev-parse --show-toplevel 2>/dev/null || true)}"
 
@@ -48,12 +43,42 @@ log "Preparing workspace ${workspace} from ${source_repo_path}"
 
 git -C "${source_repo_path}" fetch --all --prune --tags
 
+if git -C "${source_repo_path}" show-ref --verify --quiet "refs/remotes/origin/${base_branch}"; then
+  base_ref="origin/${base_branch}"
+else
+  base_ref="${base_branch}"
+fi
+
+refresh_existing_workspace() {
+  if ! git -C "${workspace}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    log "Existing workspace is not a valid git checkout: ${workspace}"
+    exit 1
+  fi
+
+  git -C "${workspace}" reset --hard
+  git -C "${workspace}" clean -fd
+  git -C "${workspace}" checkout -B "${issue_branch}" "${base_ref}"
+  git -C "${workspace}" reset --hard "${base_ref}"
+  git -C "${workspace}" clean -fd
+
+  if [[ -x "${workspace}/bin/setup" ]]; then
+    "${workspace}/bin/setup"
+  fi
+
+  log "Workspace refreshed: ${workspace} (branch ${issue_branch} @ ${base_ref})"
+}
+
+if git -C "${workspace}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  refresh_existing_workspace
+  exit 0
+fi
+
 if git -C "${source_repo_path}" show-ref --verify --quiet "refs/heads/${issue_branch}"; then
   worktree_ref="${issue_branch}"
 elif git -C "${source_repo_path}" show-ref --verify --quiet "refs/remotes/origin/${issue_branch}"; then
   worktree_ref="origin/${issue_branch}"
 else
-  worktree_ref="${base_branch}"
+  worktree_ref="${base_ref}"
 fi
 
 if ! git -C "${source_repo_path}" worktree add -f -b "${issue_branch}" "${workspace}" "${worktree_ref}"; then
@@ -67,7 +92,9 @@ if ! git -C "${source_repo_path}" worktree add -f -b "${issue_branch}" "${worksp
   fi
 fi
 
-git -C "${workspace}" checkout -B "${issue_branch}" "${base_branch}" >/dev/null 2>&1 || true
+git -C "${workspace}" checkout -B "${issue_branch}" "${base_ref}" >/dev/null 2>&1 || true
+git -C "${workspace}" reset --hard "${base_ref}" >/dev/null 2>&1 || true
+git -C "${workspace}" clean -fd >/dev/null 2>&1 || true
 
 if [[ -x "${workspace}/bin/setup" ]]; then
   "${workspace}/bin/setup"

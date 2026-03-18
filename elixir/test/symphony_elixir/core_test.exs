@@ -148,7 +148,7 @@ defmodule SymphonyElixir.CoreTest do
 
     hooks = Map.get(config, "hooks", %{})
     assert is_map(hooks)
-    assert Map.get(hooks, "after_create") =~ ".symphony/bootstrap.sh"
+    assert Map.get(hooks, "before_run") =~ ".symphony/bootstrap.sh"
     assert Map.get(hooks, "before_remove") in [nil, ""]
 
     assert String.trim(prompt) != ""

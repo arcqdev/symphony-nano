@@ -32,6 +32,10 @@ defmodule SymphonyElixir.SeamContractsTest do
       {:ok, %{issue_identifier: issue_identifier, orchestrator: orchestrator, snapshot_timeout_ms: snapshot_timeout_ms}}
     end
 
+    def session_payload(session_id, orchestrator, snapshot_timeout_ms) do
+      {:ok, %{session_id: session_id, orchestrator: orchestrator, snapshot_timeout_ms: snapshot_timeout_ms}}
+    end
+
     def refresh_payload(orchestrator) do
       {:ok, %{queued: true, orchestrator: orchestrator}}
     end
@@ -102,6 +106,9 @@ defmodule SymphonyElixir.SeamContractsTest do
 
     assert ObservabilitySurface.issue_payload("ARC-62", :orch, 50, observability_surface: RecordingObservabilitySurface) ==
              {:ok, %{issue_identifier: "ARC-62", orchestrator: :orch, snapshot_timeout_ms: 50}}
+
+    assert ObservabilitySurface.session_payload("session-1", :orch, 90, observability_surface: RecordingObservabilitySurface) ==
+             {:ok, %{session_id: "session-1", orchestrator: :orch, snapshot_timeout_ms: 90}}
 
     assert ObservabilitySurface.refresh_payload(:orch, observability_surface: RecordingObservabilitySurface) ==
              {:ok, %{queued: true, orchestrator: :orch}}

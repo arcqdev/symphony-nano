@@ -37,6 +37,61 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     end
   end
 
+  test "create-worktree hook refreshes an existing issue workspace to the current base branch" do
+    test_root =
+      Path.join(
+        System.user_home!(),
+        "symphony-elixir-worktree-refresh-#{System.unique_integer([:positive])}"
+      )
+
+    source_repo = Path.join(test_root, "source")
+    workspace = Path.join(test_root, "ARC-REFRESH")
+    script = Path.expand("../../../hooks/create-worktree.sh", __DIR__)
+
+    try do
+      File.mkdir_p!(source_repo)
+      File.mkdir_p!(workspace)
+
+      assert {_, 0} = System.cmd("git", ["-C", source_repo, "init", "-b", "main"])
+      assert {_, 0} = System.cmd("git", ["-C", source_repo, "config", "user.name", "Test User"])
+      assert {_, 0} = System.cmd("git", ["-C", source_repo, "config", "user.email", "test@example.com"])
+
+      File.write!(Path.join(source_repo, "README.md"), "initial\n")
+      assert {_, 0} = System.cmd("git", ["-C", source_repo, "add", "README.md"])
+      assert {_, 0} = System.cmd("git", ["-C", source_repo, "commit", "-m", "initial"])
+
+      hook_env = [
+        {"SYMPHONY_SOURCE_REPO_PATH", source_repo},
+        {"SYMPHONY_WORKTREE_BASE_BRANCH", "main"}
+      ]
+
+      assert {_, 0} = System.cmd("bash", [script], cd: workspace, env: hook_env)
+
+      {initial_head, 0} = System.cmd("git", ["-C", source_repo, "rev-parse", "main"])
+      assert String.trim(initial_head) == String.trim(elem(System.cmd("git", ["-C", workspace, "rev-parse", "HEAD"]), 0))
+
+      File.write!(Path.join(source_repo, "README.md"), "updated\n")
+      assert {_, 0} = System.cmd("git", ["-C", source_repo, "add", "README.md"])
+      assert {_, 0} = System.cmd("git", ["-C", source_repo, "commit", "-m", "update"])
+
+      File.write!(Path.join(workspace, "README.md"), "stale local change\n")
+      File.write!(Path.join(workspace, "local-progress.txt"), "remove me\n")
+
+      assert {_, 0} = System.cmd("bash", [script], cd: workspace, env: hook_env)
+
+      {updated_head, 0} = System.cmd("git", ["-C", source_repo, "rev-parse", "main"])
+      {workspace_head, 0} = System.cmd("git", ["-C", workspace, "rev-parse", "HEAD"])
+      {status_output, 0} = System.cmd("git", ["-C", workspace, "status", "--short"])
+
+      assert String.trim(workspace_head) == String.trim(updated_head)
+      assert status_output == ""
+      assert File.read!(Path.join(workspace, "README.md")) == "updated\n"
+      refute File.exists?(Path.join(workspace, "local-progress.txt"))
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "workspace path is deterministic per issue identifier" do
     workspace_root =
       Path.join(
@@ -597,6 +652,31 @@ defmodule SymphonyElixir.WorkspaceAndConfigTest do
     }
 
     assert Orchestrator.should_dispatch_issue_for_test(issue, state)
+  end
+
+  test "human review state is never dispatch-eligible even if misconfigured as active" do
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_human_review_state: "BLOCKED - requires human",
+      tracker_active_states: ["Todo", "In Progress", "BLOCKED - requires human"]
+    )
+
+    state = %Orchestrator.State{
+      max_concurrent_agents: 3,
+      running: %{},
+      claimed: MapSet.new(),
+      codex_totals: %{input_tokens: 0, output_tokens: 0, total_tokens: 0, seconds_running: 0},
+      retry_attempts: %{}
+    }
+
+    issue = %Issue{
+      id: "human-review-1",
+      identifier: "MT-1008",
+      title: "Needs human review",
+      state: "BLOCKED - requires human",
+      blocked_by: []
+    }
+
+    refute Orchestrator.should_dispatch_issue_for_test(issue, state)
   end
 
   test "dispatch revalidation skips stale todo issue once a non-terminal blocker appears" do

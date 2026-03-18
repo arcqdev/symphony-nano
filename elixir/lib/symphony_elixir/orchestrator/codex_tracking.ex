@@ -3,8 +3,10 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
 
   require Logger
 
-  alias SymphonyElixir.Tracker
+  alias SymphonyElixir.{StatusDashboard, Tracker}
   alias SymphonyElixir.Orchestrator.State
+
+  @session_log_max_lines 500
 
   @spec complete_issue(State.t(), String.t()) :: State.t()
   def complete_issue(%State{} = state, issue_id) do
@@ -41,10 +43,7 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
 
   @spec clear_issue_token_totals(State.t(), String.t()) :: State.t()
   def clear_issue_token_totals(%State{} = state, issue_id) do
-    %{state |
-      issue_input_token_totals: Map.delete(state.issue_input_token_totals, issue_id),
-      issue_output_token_totals: Map.delete(state.issue_output_token_totals, issue_id)
-    }
+    %{state | issue_input_token_totals: Map.delete(state.issue_input_token_totals, issue_id), issue_output_token_totals: Map.delete(state.issue_output_token_totals, issue_id)}
   end
 
   @spec maybe_enforce_token_budget(State.t(), String.t(), map()) :: State.t()
@@ -118,9 +117,7 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
         :ok
 
       {:error, reason} ->
-        Logger.error(
-          "Failed to move issue_id=#{issue_id} issue_identifier=#{identifier} to #{human_review_state}: #{inspect(reason)}"
-        )
+        Logger.error("Failed to move issue_id=#{issue_id} issue_identifier=#{identifier} to #{human_review_state}: #{inspect(reason)}")
     end
 
     comment =
@@ -132,9 +129,7 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
         :ok
 
       {:error, reason} ->
-        Logger.error(
-          "Failed to post no-progress guard comment for issue_id=#{issue_id} issue_identifier=#{identifier}: #{inspect(reason)}"
-        )
+        Logger.error("Failed to post no-progress guard comment for issue_id=#{issue_id} issue_identifier=#{identifier}: #{inspect(reason)}")
     end
   end
 
@@ -152,6 +147,8 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
     last_reported_output = Map.get(running_entry, :codex_last_reported_output_tokens, 0)
     last_reported_total = Map.get(running_entry, :codex_last_reported_total_tokens, 0)
     turn_count = Map.get(running_entry, :turn_count, 0)
+    log_line = format_session_log_line(update)
+    session_log_lines = append_session_log_line(running_entry, log_line)
 
     {
       Map.merge(running_entry, %{
@@ -168,7 +165,8 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
         codex_last_reported_input_tokens: max(last_reported_input, token_delta.input_reported),
         codex_last_reported_output_tokens: max(last_reported_output, token_delta.output_reported),
         codex_last_reported_total_tokens: max(last_reported_total, token_delta.total_reported),
-        turn_count: turn_count_for_update(turn_count, running_entry.session_id, update)
+        turn_count: turn_count_for_update(turn_count, running_entry.session_id, update),
+        session_log_lines: session_log_lines
       }),
       token_delta
     }
@@ -250,6 +248,45 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
     do: existing_count
 
   defp turn_count_for_update(_existing_count, _existing_session_id, _update), do: 0
+
+  defp format_session_log_line(%{event: event, timestamp: timestamp} = update) when not is_nil(event) do
+    event_label = normalize_event(event)
+    payload_label = update |> summarize_codex_update() |> StatusDashboard.humanize_codex_message()
+    humanized = if(payload_label == "", do: event_label, else: payload_label)
+
+    "[#{format_session_log_timestamp(timestamp)}] #{event_label}: #{humanized}"
+  end
+
+  defp format_session_log_line(_update), do: nil
+
+  defp format_session_log_timestamp(%DateTime{} = timestamp) do
+    timestamp
+    |> DateTime.truncate(:second)
+    |> DateTime.to_iso8601()
+  end
+
+  defp format_session_log_timestamp(timestamp) when is_binary(timestamp), do: timestamp
+
+  defp format_session_log_timestamp(_), do: DateTime.utc_now() |> DateTime.to_iso8601()
+
+  defp normalize_event(event) when is_atom(event), do: Atom.to_string(event)
+  defp normalize_event(event) when is_binary(event), do: event
+  defp normalize_event(_), do: "event"
+
+  defp append_session_log_line(running_entry, line) when is_binary(line) do
+    running_entry
+    |> Map.get(:session_log_lines, [])
+    |> List.wrap()
+    |> append_with_limit(line)
+  end
+
+  defp append_session_log_line(running_entry, _line),
+    do: running_entry |> Map.get(:session_log_lines, []) |> List.wrap()
+
+  defp append_with_limit(log_lines, line) when is_list(log_lines) and is_binary(line) do
+    [line | log_lines]
+    |> Enum.take(@session_log_max_lines)
+  end
 
   defp summarize_codex_update(update) do
     %{

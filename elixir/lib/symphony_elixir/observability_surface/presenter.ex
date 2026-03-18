@@ -18,6 +18,11 @@ defmodule SymphonyElixir.ObservabilitySurface.Presenter do
   end
 
   @impl true
+  def session_payload(session_id, orchestrator, snapshot_timeout_ms) do
+    Presenter.session_payload(session_id, orchestrator, snapshot_timeout_ms)
+  end
+
+  @impl true
   def refresh_payload(orchestrator) do
     Presenter.refresh_payload(orchestrator)
   end

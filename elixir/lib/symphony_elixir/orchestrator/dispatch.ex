@@ -121,7 +121,7 @@ defmodule SymphonyElixir.Orchestrator.Dispatch do
 
   @spec active_state_set() :: MapSet.t(String.t())
   def active_state_set do
-    Config.settings!().tracker.active_states
+    Config.active_states()
     |> Enum.map(&normalize_issue_state/1)
     |> Enum.filter(&(&1 != ""))
     |> MapSet.new()
@@ -233,6 +233,7 @@ defmodule SymphonyElixir.Orchestrator.Dispatch do
             codex_last_reported_total_tokens: 0,
             turn_count: 0,
             retry_attempt: Runtime.normalize_retry_attempt(attempt),
+            session_log_lines: [],
             started_at: DateTime.utc_now()
           })
 

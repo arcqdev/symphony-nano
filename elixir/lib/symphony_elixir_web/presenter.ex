@@ -50,6 +50,33 @@ defmodule SymphonyElixirWeb.Presenter do
     end
   end
 
+  @spec session_payload(String.t(), GenServer.name(), timeout()) ::
+          {:ok, map()} | {:error, :session_not_found}
+  def session_payload(session_id, orchestrator, snapshot_timeout_ms) when is_binary(session_id) do
+    case Orchestrator.snapshot(orchestrator, snapshot_timeout_ms) do
+      %{} = snapshot ->
+        running = Enum.find(snapshot.running, &(&1.session_id == session_id))
+
+        if running do
+          {:ok,
+           %{
+             session_id: session_id,
+             issue_identifier: running.identifier,
+             issue_id: issue_id_from_entries(running, nil),
+             started_at: iso8601(running.started_at),
+             logs: %{
+               codex_session_logs: session_log_lines(running)
+             }
+           }}
+        else
+          {:error, :session_not_found}
+        end
+
+      _ ->
+        {:error, :session_not_found}
+    end
+  end
+
   @spec refresh_payload(GenServer.name()) :: {:ok, map()} | {:error, :unavailable}
   def refresh_payload(orchestrator) do
     case Orchestrator.request_refresh(orchestrator) do
@@ -62,6 +89,8 @@ defmodule SymphonyElixirWeb.Presenter do
   end
 
   defp issue_payload_body(issue_identifier, running, retry) do
+    logs = if running, do: %{codex_session_logs: session_log_lines(running)}, else: %{codex_session_logs: []}
+
     %{
       issue_identifier: issue_identifier,
       issue_id: issue_id_from_entries(running, retry),
@@ -76,9 +105,7 @@ defmodule SymphonyElixirWeb.Presenter do
       },
       running: running && running_issue_payload(running),
       retry: retry && retry_issue_payload(retry),
-      logs: %{
-        codex_session_logs: []
-      },
+      logs: logs,
       recent_events: (running && recent_events_payload(running)) || [],
       last_error: retry && retry.error,
       tracked: %{}
@@ -200,6 +227,14 @@ defmodule SymphonyElixirWeb.Presenter do
 
   defp summarize_message(nil), do: nil
   defp summarize_message(message), do: StatusDashboard.humanize_codex_message(message)
+
+  defp session_log_lines(entry) when is_map(entry) do
+    entry
+    |> Map.get(:session_log_lines, [])
+    |> Enum.reverse()
+  end
+
+  defp session_log_lines(_entry), do: []
 
   defp due_at_iso8601(due_in_ms) when is_integer(due_in_ms) do
     DateTime.utc_now()

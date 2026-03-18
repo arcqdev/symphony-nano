@@ -32,6 +32,8 @@ agent:
     frontend: claude-code
   max_concurrent_agents: 4
   max_turns: 40
+  max_input_tokens: 1000000
+  max_output_tokens: 100000
 
 codex:
   command: codex app-server

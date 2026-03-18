@@ -184,6 +184,14 @@ defmodule SymphonyElixirWeb.DashboardLive do
                     <td>
                       <div class="session-stack">
                         <%= if entry.session_id do %>
+                          <a
+                            class="session-link"
+                            href={"/session/#{entry.session_id}"}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
+                            Open session
+                          </a>
                           <button
                             type="button"
                             class="subtle-button"

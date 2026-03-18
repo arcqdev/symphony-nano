@@ -9,7 +9,6 @@ tracker:
     - Todo
     - In Progress
     - Rework
-    - BLOCKED - requires human
   terminal_states:
     - Done
     - Cancelled
@@ -23,7 +22,7 @@ workspace:
   root: /Users/eddie/dev/arcqdev/.symphony-worktrees
 
 hooks:
-  after_create: |
+  before_run: |
     bash /Users/eddie/dev/arcqdev/symphonyclaw/.symphony/bootstrap.sh
   timeout_ms: 180000
 
@@ -39,6 +38,7 @@ agent:
   max_concurrent_agents: 4
   max_turns: 12
   max_input_tokens: 1000000
+  max_output_tokens: 100000
 
 codex:
   command: codex --config shell_environment_policy.inherit=all app-server

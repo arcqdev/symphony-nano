@@ -432,6 +432,12 @@ pre,
   font-size: 0.86rem;
 }
 
+.session-link {
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
 .muted {
   color: var(--muted);
 }
@@ -444,6 +450,13 @@ pre,
   border: 1px solid var(--line);
   color: #353740;
   font-size: 0.9rem;
+}
+
+.session-tail-log {
+  min-height: 420px;
+  max-height: 68vh;
+  overflow: auto;
+  white-space: pre;
 }
 
 .empty-state {
