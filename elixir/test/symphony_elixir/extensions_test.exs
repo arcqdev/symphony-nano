@@ -383,6 +383,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert_receive {:graphql_called, workpad_lookup_query, %{issueId: "issue-1"}}
     assert workpad_lookup_query =~ "comments"
+    refute workpad_lookup_query =~ "filter:"
 
     Process.put(
       {FakeLinearClient, :graphql_results},
@@ -426,8 +427,7 @@ defmodule SymphonyElixir.ExtensionsTest do
 
     assert_receive {:graphql_called, _, %{issueId: "issue-1"}}
 
-    assert_receive {:graphql_called, create_workpad_query,
-                    %{body: "## Codex Workpad\n\nNew", issueId: "issue-1"}}
+    assert_receive {:graphql_called, create_workpad_query, %{body: "## Codex Workpad\n\nNew", issueId: "issue-1"}}
 
     assert create_workpad_query =~ "commentCreate"
 
@@ -459,8 +459,7 @@ defmodule SymphonyElixir.ExtensionsTest do
             }} =
              Adapter.upsert_active_workpad("issue-1", "## Codex Workpad\n\nUpdated", "comment-3")
 
-    assert_receive {:graphql_called, update_workpad_query,
-                    %{body: "## Codex Workpad\n\nUpdated", commentId: "comment-3"}}
+    assert_receive {:graphql_called, update_workpad_query, %{body: "## Codex Workpad\n\nUpdated", commentId: "comment-3"}}
 
     assert update_workpad_query =~ "commentUpdate"
 
@@ -481,8 +480,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert_receive {:graphql_called, state_lookup_query, %{issueId: "issue-1", stateName: "Done"}}
     assert state_lookup_query =~ "states"
 
-    assert_receive {:graphql_called, update_issue_query,
-                    %{issueId: "issue-1", stateId: "state-1"}}
+    assert_receive {:graphql_called, update_issue_query, %{issueId: "issue-1", stateId: "state-1"}}
 
     assert update_issue_query =~ "issueUpdate"
 
@@ -604,8 +602,7 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "turn_count" => 7,
                  "last_event" => "notification",
                  "last_message" => "rendered",
-                 "started_at" =>
-                   state_payload["running"] |> List.first() |> Map.fetch!("started_at"),
+                 "started_at" => state_payload["running"] |> List.first() |> Map.fetch!("started_at"),
                  "last_event_at" => nil,
                  "stage" => nil,
                  "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
@@ -743,9 +740,7 @@ defmodule SymphonyElixir.ExtensionsTest do
   test "stub intake endpoint validates required payload for stub tracker mode" do
     write_workflow_file!(Workflow.workflow_file_path(), tracker_kind: "stub")
 
-    start_test_endpoint(
-      orchestrator: Module.concat(__MODULE__, :StubIntakeValidationOrchestrator)
-    )
+    start_test_endpoint(orchestrator: Module.concat(__MODULE__, :StubIntakeValidationOrchestrator))
 
     assert json_response(
              post(build_conn(), "/api/v1/stub/intake", %{
@@ -946,9 +941,7 @@ defmodule SymphonyElixir.ExtensionsTest do
       snapshot_timeout_ms: 50
     ]
 
-    start_supervised!(
-      {StaticOrchestrator, name: orchestrator_name, snapshot: snapshot, refresh: refresh}
-    )
+    start_supervised!({StaticOrchestrator, name: orchestrator_name, snapshot: snapshot, refresh: refresh})
 
     start_supervised!({HttpServer, server_opts})
 

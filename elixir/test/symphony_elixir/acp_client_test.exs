@@ -17,6 +17,18 @@ defmodule SymphonyElixir.AcpClientTest do
       trace_file = Path.join(test_root, "acp.trace")
 
       File.mkdir_p!(workspace)
+      File.mkdir_p!(Path.join(workspace, ".claude"))
+
+      File.write!(Path.join(workspace, ".claude/settings.json"), """
+      {
+        "mcpServers": {
+          "paper": {
+            "type": "http",
+            "url": "http://127.0.0.1:29979/mcp"
+          }
+        }
+      }
+      """)
 
       File.write!(acp_binary, """
       #!/bin/sh
@@ -112,7 +124,9 @@ defmodule SymphonyElixir.AcpClientTest do
         assert Enum.any?(trace_payloads, fn payload ->
                  payload["method"] == "session/new" and
                    get_in(payload, ["params", "cwd"]) == session.workspace and
-                   get_in(payload, ["params", "mcpServers"]) == []
+                   get_in(payload, ["params", "mcpServers"]) == %{
+                     "paper" => %{"url" => "http://127.0.0.1:29979/mcp"}
+                   }
                end)
 
         assert Enum.any?(trace_payloads, fn payload ->

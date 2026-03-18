@@ -1,7 +1,7 @@
 defmodule SymphonyElixir.Acp.Workspace do
   @moduledoc false
 
-  alias SymphonyElixir.{Config, PathSafety, SSH}
+  alias SymphonyElixir.{Config, PathSafety, SessionEnv, SSH}
 
   @spec validate_workspace_cwd(Path.t(), String.t() | nil) :: {:ok, Path.t()} | {:error, term()}
   def validate_workspace_cwd(workspace, nil) when is_binary(workspace) do
@@ -63,7 +63,7 @@ defmodule SymphonyElixir.Acp.Workspace do
           args: [~c"-lc", String.to_charlist(command)],
           cd: String.to_charlist(workspace),
           line: line_bytes
-        ] ++ local_env_port_options(backend_config.env)
+        ] ++ local_env_port_options(SessionEnv.merge(backend_config.env))
 
       port = Port.open({:spawn_executable, String.to_charlist(executable)}, port_options)
       {:ok, port}
@@ -110,6 +110,7 @@ defmodule SymphonyElixir.Acp.Workspace do
   defp remote_launch_command(workspace, %{command: command, env: env}) do
     env_exports =
       env
+      |> SessionEnv.merge()
       |> Enum.map(fn {key, value} -> "export #{key}=#{shell_escape(value)}" end)
       |> Enum.join(" && ")
 

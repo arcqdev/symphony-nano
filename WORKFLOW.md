@@ -105,7 +105,7 @@ pretend the staged review pass happened.
 
 ## Prerequisite: `linear` CLI is available
 
-The agent should be able to talk to Linear through the local `linear` CLI, authenticated with `LINEAR_API_KEY`. If `linear` is unavailable or auth is missing, stop and ask the user to configure Linear CLI access.
+The agent should be able to talk to Linear through the local `linear` CLI, authenticated with `LINEAR_API_TOKEN` or `LINEAR_API_KEY`. Symphony mirrors the configured token into both env var names for child sessions. If `linear` is unavailable or auth is missing, stop and ask the user to configure Linear CLI access.
 
 ## Default posture
 
@@ -170,6 +170,7 @@ When stage routing is active, follow these role contracts strictly.
 
 1. Fetch the issue by explicit ticket ID.
 2. Read the current state.
+   - Use the internal Linear issue ID already supplied in the runtime prompt for tracker API calls and `sync_workpad`.
 3. Route to the matching flow:
    - `Backlog` -> do not modify issue content/state; stop and wait for human to move it to `Todo`.
    - `Todo` -> immediately move to `In Progress`, then ensure bootstrap workpad comment exists (create if missing), then start execution flow.

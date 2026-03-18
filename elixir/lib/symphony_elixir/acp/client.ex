@@ -5,7 +5,7 @@ defmodule SymphonyElixir.Acp.Client do
 
   require Logger
 
-  alias SymphonyElixir.{Config, StageRouting}
+  alias SymphonyElixir.{Config, McpSettings, StageRouting}
   alias SymphonyElixir.Acp.{TurnControl, Workspace}
 
   @initialize_id 1
@@ -235,7 +235,7 @@ defmodule SymphonyElixir.Acp.Client do
       "method" => "session/new",
       "params" => %{
         "cwd" => workspace,
-        "mcpServers" => []
+        "mcpServers" => McpSettings.acp_mcp_servers(workspace)
       }
     })
 

@@ -117,6 +117,9 @@ defmodule SymphonyElixirWeb.DashboardLive do
             <p class="metric-detail numeric">
               In <%= format_int(@payload.codex_totals.input_tokens) %> / Out <%= format_int(@payload.codex_totals.output_tokens) %>
             </p>
+            <p class="metric-detail numeric">
+              Fresh <%= format_int(non_cached_input_tokens(@payload.codex_totals)) %> / Cached <%= format_int(Map.get(@payload.codex_totals, :cached_input_tokens, 0)) %>
+            </p>
           </article>
 
           <article class="metric-card">
@@ -225,6 +228,7 @@ defmodule SymphonyElixirWeb.DashboardLive do
                       <div class="token-stack numeric">
                         <span>Total: <%= format_int(entry.tokens.total_tokens) %></span>
                         <span class="muted">In <%= format_int(entry.tokens.input_tokens) %> / Out <%= format_int(entry.tokens.output_tokens) %></span>
+                        <span class="muted">Fresh <%= format_int(non_cached_input_tokens(entry.tokens)) %> / Cached <%= format_int(Map.get(entry.tokens, :cached_input_tokens, 0)) %></span>
                       </div>
                     </td>
                   </tr>
@@ -337,6 +341,12 @@ defmodule SymphonyElixirWeb.DashboardLive do
       {:ok, parsed, _offset} -> runtime_seconds_from_started_at(parsed, now)
       _ -> 0
     end
+  end
+
+  defp non_cached_input_tokens(%{} = tokens) do
+    input_tokens = Map.get(tokens, :input_tokens, 0)
+    cached_input_tokens = Map.get(tokens, :cached_input_tokens, 0)
+    max(input_tokens - cached_input_tokens, 0)
   end
 
   defp runtime_seconds_from_started_at(_started_at, _now), do: 0

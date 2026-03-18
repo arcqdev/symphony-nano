@@ -319,6 +319,22 @@ defmodule SymphonyElixir.ConfigAndSchemaTest do
     assert settings.workspace.root == Path.join(System.tmp_dir!(), "symphony_workspaces")
   end
 
+  test "schema falls back to LINEAR_API_TOKEN when LINEAR_API_KEY is unset" do
+    previous_linear_api_key = System.get_env("LINEAR_API_KEY")
+    previous_linear_api_token = System.get_env("LINEAR_API_TOKEN")
+
+    System.delete_env("LINEAR_API_KEY")
+    System.put_env("LINEAR_API_TOKEN", "token-from-linear-api-token")
+
+    on_exit(fn ->
+      restore_env("LINEAR_API_KEY", previous_linear_api_key)
+      restore_env("LINEAR_API_TOKEN", previous_linear_api_token)
+    end)
+
+    assert {:ok, settings} = Schema.parse(%{tracker: %{api_key: nil}})
+    assert settings.tracker.api_key == "token-from-linear-api-token"
+  end
+
   test "schema resolves explicit policies and only falls back when thread sandbox requests it" do
     explicit_policy = %{"type" => "workspaceWrite", "writableRoots" => ["/tmp/explicit"]}
 

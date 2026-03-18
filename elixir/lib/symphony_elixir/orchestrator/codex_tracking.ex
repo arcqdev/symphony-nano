@@ -140,10 +140,12 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
   def integrate_codex_update(running_entry, %{event: event, timestamp: timestamp} = update) do
     token_delta = extract_token_delta(running_entry, update)
     codex_input_tokens = Map.get(running_entry, :codex_input_tokens, 0)
+    codex_cached_input_tokens = Map.get(running_entry, :codex_cached_input_tokens, 0)
     codex_output_tokens = Map.get(running_entry, :codex_output_tokens, 0)
     codex_total_tokens = Map.get(running_entry, :codex_total_tokens, 0)
     codex_app_server_pid = Map.get(running_entry, :codex_app_server_pid)
     last_reported_input = Map.get(running_entry, :codex_last_reported_input_tokens, 0)
+    last_reported_cached_input = Map.get(running_entry, :codex_last_reported_cached_input_tokens, 0)
     last_reported_output = Map.get(running_entry, :codex_last_reported_output_tokens, 0)
     last_reported_total = Map.get(running_entry, :codex_last_reported_total_tokens, 0)
     turn_count = Map.get(running_entry, :turn_count, 0)
@@ -160,9 +162,12 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
         last_codex_event: event,
         codex_app_server_pid: codex_app_server_pid_for_update(codex_app_server_pid, update),
         codex_input_tokens: codex_input_tokens + token_delta.input_tokens,
+        codex_cached_input_tokens: codex_cached_input_tokens + token_delta.cached_input_tokens,
         codex_output_tokens: codex_output_tokens + token_delta.output_tokens,
         codex_total_tokens: codex_total_tokens + token_delta.total_tokens,
         codex_last_reported_input_tokens: max(last_reported_input, token_delta.input_reported),
+        codex_last_reported_cached_input_tokens:
+          max(last_reported_cached_input, token_delta.cached_input_reported),
         codex_last_reported_output_tokens: max(last_reported_output, token_delta.output_reported),
         codex_last_reported_total_tokens: max(last_reported_total, token_delta.total_reported),
         turn_count: turn_count_for_update(turn_count, running_entry.session_id, update),
@@ -175,9 +180,14 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
   @spec apply_codex_token_delta(State.t(), map()) :: State.t()
   def apply_codex_token_delta(
         %{codex_totals: codex_totals} = state,
-        %{input_tokens: input, output_tokens: output, total_tokens: total} = token_delta
+        %{
+          input_tokens: input,
+          cached_input_tokens: cached_input,
+          output_tokens: output,
+          total_tokens: total
+        } = token_delta
       )
-      when is_integer(input) and is_integer(output) and is_integer(total) do
+      when is_integer(input) and is_integer(cached_input) and is_integer(output) and is_integer(total) do
     %{state | codex_totals: apply_token_delta(codex_totals, token_delta)}
   end
 
@@ -205,6 +215,7 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
         state.codex_totals,
         %{
           input_tokens: 0,
+          cached_input_tokens: 0,
           output_tokens: 0,
           total_tokens: 0,
           seconds_running: runtime_seconds
@@ -251,13 +262,43 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
 
   defp format_session_log_line(%{event: event, timestamp: timestamp} = update) when not is_nil(event) do
     event_label = normalize_event(event)
-    payload_label = update |> summarize_codex_update() |> StatusDashboard.humanize_codex_message()
-    humanized = if(payload_label == "", do: event_label, else: payload_label)
+    log_body = session_log_body(update)
+    fallback = update |> summarize_codex_update() |> StatusDashboard.humanize_codex_message()
+    rendered_body = if(log_body == "", do: fallback, else: log_body)
+    humanized = if(rendered_body == "", do: event_label, else: rendered_body)
 
     "[#{format_session_log_timestamp(timestamp)}] #{event_label}: #{humanized}"
   end
 
   defp format_session_log_line(_update), do: nil
+
+  defp session_log_body(update) when is_map(update) do
+    cond do
+      binary_log_body?(update[:raw]) ->
+        String.trim(update[:raw])
+
+      binary_log_body?(update[:payload]) ->
+        String.trim(update[:payload])
+
+      is_map(update[:payload]) ->
+        update[:payload]
+        |> inspect(pretty: true, limit: :infinity, printable_limit: :infinity)
+        |> String.trim()
+
+      is_map(update[:message]) ->
+        update[:message]
+        |> inspect(pretty: true, limit: :infinity, printable_limit: :infinity)
+        |> String.trim()
+
+      true ->
+        ""
+    end
+  end
+
+  defp session_log_body(_update), do: ""
+
+  defp binary_log_body?(value) when is_binary(value), do: String.trim(value) != ""
+  defp binary_log_body?(_value), do: false
 
   defp format_session_log_timestamp(%DateTime{} = timestamp) do
     timestamp
@@ -298,12 +339,16 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
 
   defp apply_token_delta(codex_totals, token_delta) do
     input_tokens = Map.get(codex_totals, :input_tokens, 0) + token_delta.input_tokens
+    cached_input_tokens =
+      Map.get(codex_totals, :cached_input_tokens, 0) + Map.get(token_delta, :cached_input_tokens, 0)
+
     output_tokens = Map.get(codex_totals, :output_tokens, 0) + token_delta.output_tokens
     total_tokens = Map.get(codex_totals, :total_tokens, 0) + token_delta.total_tokens
     seconds_running = Map.get(codex_totals, :seconds_running, 0) + Map.get(token_delta, :seconds_running, 0)
 
     %{
       input_tokens: max(0, input_tokens),
+      cached_input_tokens: max(0, cached_input_tokens),
       output_tokens: max(0, output_tokens),
       total_tokens: max(0, total_tokens),
       seconds_running: max(0, seconds_running)
@@ -316,16 +361,19 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
 
     {
       compute_token_delta(running_entry, :input, usage, :codex_last_reported_input_tokens),
+      compute_token_delta(running_entry, :cached_input, usage, :codex_last_reported_cached_input_tokens),
       compute_token_delta(running_entry, :output, usage, :codex_last_reported_output_tokens),
       compute_token_delta(running_entry, :total, usage, :codex_last_reported_total_tokens)
     }
     |> Tuple.to_list()
-    |> then(fn [input, output, total] ->
+    |> then(fn [input, cached_input, output, total] ->
       %{
         input_tokens: input.delta,
+        cached_input_tokens: cached_input.delta,
         output_tokens: output.delta,
         total_tokens: total.delta,
         input_reported: input.reported,
+        cached_input_reported: cached_input.reported,
         output_reported: output.reported,
         total_reported: total.reported
       }
@@ -495,21 +543,25 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
   defp integer_token_map?(payload) do
     token_fields = [
       :input_tokens,
+      :cached_input_tokens,
       :output_tokens,
       :total_tokens,
       :prompt_tokens,
       :completion_tokens,
       :inputTokens,
+      :cachedInputTokens,
       :outputTokens,
       :totalTokens,
       :promptTokens,
       :completionTokens,
       "input_tokens",
+      "cached_input_tokens",
       "output_tokens",
       "total_tokens",
       "prompt_tokens",
       "completion_tokens",
       "inputTokens",
+      "cachedInputTokens",
       "outputTokens",
       "totalTokens",
       "promptTokens",
@@ -535,6 +587,15 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
         :promptTokens,
         "inputTokens",
         :inputTokens
+      ])
+
+  defp get_token_usage(usage, :cached_input),
+    do:
+      payload_get(usage, [
+        "cached_input_tokens",
+        :cached_input_tokens,
+        "cachedInputTokens",
+        :cachedInputTokens
       ])
 
   defp get_token_usage(usage, :output),

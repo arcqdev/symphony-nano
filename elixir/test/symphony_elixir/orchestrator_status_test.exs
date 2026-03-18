@@ -1,6 +1,8 @@
 defmodule SymphonyElixir.OrchestratorStatusTest do
   use SymphonyElixir.TestSupport
 
+  alias SymphonyElixir.Orchestrator.CodexTracking
+
   test "snapshot returns :timeout when snapshot server is unresponsive" do
     server_name = Module.concat(__MODULE__, :UnresponsiveSnapshotServer)
     parent = self()
@@ -99,6 +101,36 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
              message: %{method: "some-event"},
              timestamp: now
            }
+  end
+
+  test "codex tracking stores raw session log lines for full tail views" do
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+
+    running_entry = %{
+      session_log_lines: [],
+      codex_input_tokens: 0,
+      codex_cached_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_cached_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      turn_count: 0,
+      session_id: nil
+    }
+
+    {updated_entry, _token_delta} =
+      CodexTracking.integrate_codex_update(running_entry, %{
+        event: :notification,
+        payload: %{"method" => "item/commandExecution/outputDelta", "params" => %{"outputDelta" => "line 1\nline 2"}},
+        raw: ~s({"method":"item/commandExecution/outputDelta","params":{"outputDelta":"line 1\\nline 2"}}),
+        timestamp: now
+      })
+
+    assert updated_entry.session_log_lines == [
+             ~s([#{DateTime.to_iso8601(now)}] notification: {"method":"item/commandExecution/outputDelta","params":{"outputDelta":"line 1\\nline 2"}})
+           ]
   end
 
   test "orchestrator snapshot includes routed stage and backend metadata" do
@@ -630,6 +662,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     snapshot = GenServer.call(pid, :snapshot)
     assert %{running: [snapshot_entry]} = snapshot
     assert snapshot_entry.codex_input_tokens == 200
+    assert snapshot_entry.codex_cached_input_tokens == 0
     assert snapshot_entry.codex_output_tokens == 100
     assert snapshot_entry.codex_total_tokens == 300
   end
@@ -669,9 +702,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       last_codex_timestamp: nil,
       last_codex_event: nil,
       codex_input_tokens: 0,
+      codex_cached_input_tokens: 0,
       codex_output_tokens: 0,
       codex_total_tokens: 0,
       codex_last_reported_input_tokens: 0,
+      codex_last_reported_cached_input_tokens: 0,
       codex_last_reported_output_tokens: 0,
       codex_last_reported_total_tokens: 0,
       started_at: started_at
@@ -684,8 +719,8 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     end)
 
     for usage <- [
-          %{"input_tokens" => 8, "output_tokens" => 3, "total_tokens" => 11},
-          %{"input_tokens" => 10, "output_tokens" => 4, "total_tokens" => 14}
+          %{"input_tokens" => 8, "cached_input_tokens" => 2, "output_tokens" => 3, "total_tokens" => 11},
+          %{"input_tokens" => 10, "cached_input_tokens" => 4, "output_tokens" => 4, "total_tokens" => 14}
         ] do
       send(
         pid,
@@ -704,6 +739,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     snapshot = GenServer.call(pid, :snapshot)
     assert %{running: [snapshot_entry]} = snapshot
     assert snapshot_entry.codex_input_tokens == 10
+    assert snapshot_entry.codex_cached_input_tokens == 4
     assert snapshot_entry.codex_output_tokens == 4
     assert snapshot_entry.codex_total_tokens == 14
   end
@@ -743,9 +779,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
       last_codex_timestamp: nil,
       last_codex_event: nil,
       codex_input_tokens: 0,
+      codex_cached_input_tokens: 0,
       codex_output_tokens: 0,
       codex_total_tokens: 0,
       codex_last_reported_input_tokens: 0,
+      codex_last_reported_cached_input_tokens: 0,
       codex_last_reported_output_tokens: 0,
       codex_last_reported_total_tokens: 0,
       started_at: started_at
@@ -787,6 +825,7 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     snapshot = GenServer.call(pid, :snapshot)
     assert %{running: [snapshot_entry]} = snapshot
     assert snapshot_entry.codex_input_tokens == 0
+    assert snapshot_entry.codex_cached_input_tokens == 0
     assert snapshot_entry.codex_output_tokens == 0
     assert snapshot_entry.codex_total_tokens == 0
   end

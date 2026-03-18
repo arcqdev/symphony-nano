@@ -184,9 +184,7 @@ defmodule SymphonyElixir.StubE2eTest do
   defp wait_for_state(pid, predicate, attempts, _delay_ms) when attempts <= 0 do
     state = :sys.get_state(pid)
 
-    flunk(
-      "timed out waiting for orchestrator state to match predicate: #{inspect(predicate)} in #{inspect(state)}"
-    )
+    flunk("timed out waiting for orchestrator state to match predicate: #{inspect(predicate)} in #{inspect(state)}")
   end
 
   defp wait_for_file_cleanup(path, attempts, delay_ms)

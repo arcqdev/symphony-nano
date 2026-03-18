@@ -30,7 +30,7 @@ Symphony stops the active agent for that issue and cleans up matching workspaces
 1. Make sure your codebase is set up to work well with agents: see
    [Harness engineering](https://openai.com/index/harness-engineering/).
 2. Get a new personal token in Linear via Settings → Security & access → Personal API keys, and
-   set it as the `LINEAR_API_KEY` environment variable.
+   set it as the `LINEAR_API_TOKEN` or `LINEAR_API_KEY` environment variable.
 3. Copy this directory's `WORKFLOW.md` to your repo.
 4. Optionally copy the `commit`, `push`, `pull`, `land`, and `linear` skills to your repo.
    - The `linear` skill is the default agent-facing Linear path in this repo.
@@ -169,6 +169,13 @@ Notes:
 - If a hook needs `mise exec` inside a freshly cloned workspace, trust the repo config and fetch
   the project dependencies in `hooks.after_create` before invoking `mise` later from other hooks.
 - `tracker.api_key` reads from `LINEAR_API_KEY` when unset or when value is `$LINEAR_API_KEY`.
+- If `LINEAR_API_KEY` is unset, Symphony falls back to `LINEAR_API_TOKEN`.
+- Child agent sessions mirror whichever Linear token variable is present so both
+  `LINEAR_API_TOKEN` and `LINEAR_API_KEY` are available inside Codex and ACP-backed runs.
+- Symphony also loads repo-local Claude MCP server declarations from `.claude/settings.json` and
+  forwards them into Claude ACP sessions. The same repo-local MCP definitions are injected into
+  Codex app-server startup as config overrides, in addition to any existing global Codex MCP
+  config.
 - For path values, `~` is expanded to the home directory.
 - For env-backed path values, use `$VAR`. `workspace.root` resolves `$VAR` before path handling,
   while `codex.command` stays a shell command string and any `$VAR` expansion there happens in the

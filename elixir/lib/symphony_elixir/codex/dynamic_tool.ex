@@ -25,8 +25,7 @@ defmodule SymphonyElixir.Codex.DynamicTool do
       },
       "comment_id" => %{
         "type" => "string",
-        "description" =>
-          "Existing workpad comment ID to update. Omit to create or reuse the active workpad."
+        "description" => "Existing workpad comment ID to update. Omit to create or reuse the active workpad."
       }
     }
   }

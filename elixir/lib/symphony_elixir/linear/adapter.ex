@@ -26,7 +26,7 @@ defmodule SymphonyElixir.Linear.Adapter do
   @workpad_lookup_query """
   query SymphonyActiveWorkpad($issueId: String!) {
     issue(id: $issueId) {
-      comments(first: 50, filter: {body: {containsIgnoreCase: "## Codex Workpad"}, resolvedAt: {null: true}}) {
+      comments(first: 50) {
         nodes {
           id
           body

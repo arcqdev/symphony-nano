@@ -567,6 +567,58 @@ defmodule SymphonyElixir.CoreOrchestratorAndPromptTest do
     assert prompt =~ "attempt=3"
   end
 
+  test "prompt builder prepends internal tracker and MCP runtime context" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-prompt-runtime-context-#{System.unique_integer([:positive])}"
+      )
+
+    workspace_root = Path.join(test_root, "workspaces")
+    workspace = Path.join(workspace_root, "MT-CTX")
+
+    try do
+      File.mkdir_p!(Path.join(workspace, ".claude"))
+
+      File.write!(Path.join(workspace, ".claude/settings.json"), """
+      {
+        "mcpServers": {
+          "paper": {
+            "type": "http",
+            "url": "http://127.0.0.1:29979/mcp"
+          }
+        }
+      }
+      """)
+
+      write_workflow_file!(Workflow.workflow_file_path(),
+        workspace_root: workspace_root,
+        prompt: "Ticket {{ issue.identifier }}"
+      )
+
+      issue = %Issue{
+        id: "linear-internal-id-1",
+        identifier: "MT-CTX",
+        title: "Use direct tracker context",
+        description: "Prompt should include orchestration hints",
+        state: "In Progress",
+        url: "https://example.org/issues/MT-CTX",
+        labels: []
+      }
+
+      prompt = PromptBuilder.build_prompt(issue, workspace: workspace)
+
+      assert prompt =~ "Internal Linear issue ID: linear-internal-id-1"
+      assert prompt =~ "sync_workpad(issue_id, file_path, comment_id?)"
+      assert prompt =~ "LINEAR_API_TOKEN"
+      assert prompt =~ "LINEAR_API_KEY"
+      assert prompt =~ "Repo MCP servers loaded for this workspace: paper"
+      assert prompt =~ "Ticket MT-CTX"
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "prompt builder renders issue datetime fields without crashing" do
     workflow_prompt = "Ticket {{ issue.identifier }} created={{ issue.created_at }} updated={{ issue.updated_at }}"
 

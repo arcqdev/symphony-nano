@@ -260,7 +260,7 @@ defmodule SymphonyElixir.Config.Schema do
   defp finalize_settings(settings) do
     tracker = %{
       settings.tracker
-      | api_key: resolve_secret_setting(settings.tracker.api_key, System.get_env("LINEAR_API_KEY")),
+      | api_key: resolve_secret_setting(settings.tracker.api_key, linear_api_token_fallback()),
         assignee: resolve_secret_setting(settings.tracker.assignee, System.get_env("LINEAR_ASSIGNEE"))
     }
 
@@ -479,6 +479,11 @@ defmodule SymphonyElixir.Config.Schema do
       resolved when is_binary(resolved) -> normalize_secret_value(resolved)
       resolved -> resolved
     end
+  end
+
+  defp linear_api_token_fallback do
+    normalize_secret_value(System.get_env("LINEAR_API_KEY")) ||
+      normalize_secret_value(System.get_env("LINEAR_API_TOKEN"))
   end
 
   defp resolve_path_value(value, default) when is_binary(value) do

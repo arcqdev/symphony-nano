@@ -628,6 +628,54 @@ defmodule SymphonyElixir.CoreRunnerAndAppServerTest do
              "codex --config model_reasoning_effort=high --model 'gpt-5.3-codex' app-server"
   end
 
+  test "runtime bootstrap exposes repo MCP config and mirrored Linear env aliases" do
+    test_root =
+      Path.join(
+        System.tmp_dir!(),
+        "symphony-elixir-app-server-mcp-env-#{System.unique_integer([:positive])}"
+      )
+
+    previous_linear_api_key = System.get_env("LINEAR_API_KEY")
+    previous_linear_api_token = System.get_env("LINEAR_API_TOKEN")
+
+    try do
+      workspace_root = Path.join(test_root, "workspaces")
+      workspace = Path.join(workspace_root, "MT-MCP")
+
+      on_exit(fn ->
+        restore_env("LINEAR_API_KEY", previous_linear_api_key)
+        restore_env("LINEAR_API_TOKEN", previous_linear_api_token)
+      end)
+
+      System.delete_env("LINEAR_API_KEY")
+      System.put_env("LINEAR_API_TOKEN", "token-only-value")
+
+      File.mkdir_p!(Path.join(workspace, ".claude"))
+
+      File.write!(Path.join(workspace, ".claude/settings.json"), """
+      {
+        "mcpServers": {
+          "paper": {
+            "type": "http",
+            "url": "http://127.0.0.1:29979/mcp"
+          }
+        }
+      }
+      """)
+
+      assert SymphonyElixir.McpSettings.codex_config_overrides(workspace) == [
+               ~s(--config 'mcp_servers.paper.url="http://127.0.0.1:29979/mcp"')
+             ]
+
+      assert SymphonyElixir.SessionEnv.aliases() == %{
+               "LINEAR_API_KEY" => "token-only-value",
+               "LINEAR_API_TOKEN" => "token-only-value"
+             }
+    after
+      File.rm_rf(test_root)
+    end
+  end
+
   test "app server startup payload uses configurable approval and sandbox settings from workflow config" do
     test_root =
       Path.join(

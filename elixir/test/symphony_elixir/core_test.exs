@@ -174,6 +174,29 @@ defmodule SymphonyElixir.CoreTest do
     assert :ok = Config.validate!()
   end
 
+  test "linear api token resolves from LINEAR_API_TOKEN env var when LINEAR_API_KEY is unset" do
+    previous_linear_api_key = System.get_env("LINEAR_API_KEY")
+    previous_linear_api_token = System.get_env("LINEAR_API_TOKEN")
+    env_api_token = "test-linear-api-token"
+
+    on_exit(fn ->
+      restore_env("LINEAR_API_KEY", previous_linear_api_key)
+      restore_env("LINEAR_API_TOKEN", previous_linear_api_token)
+    end)
+
+    System.delete_env("LINEAR_API_KEY")
+    System.put_env("LINEAR_API_TOKEN", env_api_token)
+
+    write_workflow_file!(Workflow.workflow_file_path(),
+      tracker_api_token: nil,
+      tracker_project_slug: "project",
+      codex_command: "/bin/sh app-server"
+    )
+
+    assert Config.settings!().tracker.api_key == env_api_token
+    assert :ok = Config.validate!()
+  end
+
   test "linear assignee resolves from LINEAR_ASSIGNEE env var" do
     previous_linear_assignee = System.get_env("LINEAR_ASSIGNEE")
     env_assignee = "dev@example.com"

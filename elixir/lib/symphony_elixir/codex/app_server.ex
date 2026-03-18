@@ -4,7 +4,7 @@ defmodule SymphonyElixir.Codex.AppServer do
   """
 
   require Logger
-  alias SymphonyElixir.{Codex.DynamicTool, Config, PathSafety, SSH}
+  alias SymphonyElixir.{Codex.DynamicTool, Config, McpSettings, PathSafety, SessionEnv, SSH}
   alias SymphonyElixir.Codex.AppServer.Approvals
 
   @initialize_id 1
@@ -116,9 +116,7 @@ defmodule SymphonyElixir.Codex.AppServer do
 
         case await_turn_completion(port, on_message, tool_executor, auto_approve_requests) do
           {:ok, result} ->
-            Logger.info(
-              "Codex session completed for #{issue_context(issue)} session_id=#{session_id}"
-            )
+            Logger.info("Codex session completed for #{issue_context(issue)} session_id=#{session_id}")
 
             {:ok,
              %{
@@ -129,9 +127,7 @@ defmodule SymphonyElixir.Codex.AppServer do
              }}
 
           {:error, reason} ->
-            Logger.warning(
-              "Codex session ended with error for #{issue_context(issue)} session_id=#{session_id}: #{inspect(reason)}"
-            )
+            Logger.warning("Codex session ended with error for #{issue_context(issue)} session_id=#{session_id}: #{inspect(reason)}")
 
             emit_message(
               on_message,
@@ -178,8 +174,7 @@ defmodule SymphonyElixir.Codex.AppServer do
           {:error, {:invalid_workspace_cwd, :symlink_escape, expanded_workspace, canonical_root}}
 
         true ->
-          {:error,
-           {:invalid_workspace_cwd, :outside_workspace_root, canonical_workspace, canonical_root}}
+          {:error, {:invalid_workspace_cwd, :outside_workspace_root, canonical_workspace, canonical_root}}
       end
     else
       {:error, {:path_canonicalize_failed, path, reason}} ->
@@ -214,10 +209,10 @@ defmodule SymphonyElixir.Codex.AppServer do
             :binary,
             :exit_status,
             :stderr_to_stdout,
-            args: [~c"-lc", String.to_charlist(codex_launch_command(stage))],
+            args: [~c"-lc", String.to_charlist(configured_codex_launch_command(stage, workspace))],
             cd: String.to_charlist(workspace),
             line: @port_line_bytes
-          ]
+          ] ++ local_env_port_options(SessionEnv.aliases())
         )
 
       {:ok, port}
@@ -229,11 +224,29 @@ defmodule SymphonyElixir.Codex.AppServer do
     SSH.start_port(worker_host, remote_command, line: @port_line_bytes)
   end
 
-  defp remote_launch_command(workspace, stage) when is_binary(workspace) do
+  defp local_env_port_options(env) when map_size(env) == 0, do: []
+
+  defp local_env_port_options(env) do
     [
-      "cd #{shell_escape(workspace)}",
-      "exec #{codex_launch_command(stage)}"
+      env:
+        Enum.map(env, fn {key, value} ->
+          {String.to_charlist(key), String.to_charlist(value)}
+        end)
     ]
+  end
+
+  defp remote_launch_command(workspace, stage) when is_binary(workspace) do
+    env_exports =
+      SessionEnv.aliases()
+      |> Enum.map(fn {key, value} -> "export #{key}=#{shell_escape(value)}" end)
+      |> Enum.join(" && ")
+
+    [
+      env_exports,
+      "cd #{shell_escape(workspace)}",
+      "exec #{configured_codex_launch_command(stage)}"
+    ]
+    |> Enum.reject(&(&1 == ""))
     |> Enum.join(" && ")
   end
 
@@ -245,14 +258,20 @@ defmodule SymphonyElixir.Codex.AppServer do
     |> maybe_add_reasoning_effort(normalize_optional_string(reasoning_effort))
   end
 
-  defp codex_launch_command(stage) do
+  defp configured_codex_launch_command(stage, workspace \\ nil) do
     codex = Config.settings!().codex
 
-    codex_launch_command(
-      codex.command,
-      Config.codex_model(stage),
-      Config.codex_reasoning_effort(stage)
-    )
+    codex.command
+    |> codex_launch_command(Config.codex_model(stage), Config.codex_reasoning_effort(stage))
+    |> maybe_add_mcp_overrides(workspace)
+  end
+
+  defp maybe_add_mcp_overrides(command, workspace) do
+    workspace
+    |> McpSettings.codex_config_overrides()
+    |> Enum.reduce(command, fn override, acc ->
+      insert_before_app_server_or_append(acc, override)
+    end)
   end
 
   defp port_metadata(port, worker_host) when is_port(port) do

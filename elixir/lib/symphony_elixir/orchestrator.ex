@@ -580,6 +580,7 @@ defmodule SymphonyElixir.Orchestrator do
           session_id: metadata.session_id,
           codex_app_server_pid: metadata.codex_app_server_pid,
           codex_input_tokens: metadata.codex_input_tokens,
+          codex_cached_input_tokens: Map.get(metadata, :codex_cached_input_tokens, 0),
           codex_output_tokens: metadata.codex_output_tokens,
           codex_total_tokens: metadata.codex_total_tokens,
           turn_count: Map.get(metadata, :turn_count, 0),
