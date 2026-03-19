@@ -112,6 +112,8 @@ The agent should be able to talk to Linear through the local `linear` CLI, authe
 - Start by determining the ticket's current status, then follow the matching flow for that status.
 - Start every task by opening the tracking workpad comment and bringing it up to date before doing new implementation work.
 - When the runtime exposes `sync_workpad`, use it for workpad body syncs from a workspace file instead of sending large inline workpad updates.
+- Always sync the full workpad body; do not rely on differential comment updates.
+- Prefer more frequent full rewrites over stale summaries when checklist state changes materially.
 - Spend extra effort up front on planning and verification design before implementation.
 - Reproduce first: always confirm the current behavior/issue signal before changing code so the fix target is explicit.
 - Keep ticket metadata current (state, checklist, acceptance criteria, links).
@@ -202,6 +204,7 @@ When stage routing is active, follow these role contracts strictly.
     - Expand/fix the plan so it is comprehensive for current scope.
     - Ensure `Acceptance Criteria` and `Validation` are current and still make sense for the task.
 4.  Start work by writing/updating a hierarchical plan in the workpad comment.
+    - Maintain the full body in a workspace file when convenient, but the persisted state is the single Linear workpad comment.
 5.  Ensure the workpad includes a compact environment stamp at the top as a code fence line:
     - Format: `<host>:<abs-workdir>@<short-sha>`
     - Example: `devbox-01:/home/dev-user/code/symphony-workspaces/MT-32@7bdde33bc`
@@ -250,8 +253,8 @@ Use this only when completion is blocked by missing required tools or missing au
     - Check off completed items.
     - Add newly discovered items in the appropriate section.
     - Keep parent/child structure intact as scope evolves.
-    - Do not update the workpad after every checklist item or small milestone.
-    - Complete the current stage first, then make one compact workpad rewrite covering the stage outcome, validation status, blockers, and next step.
+    - Rewrite the full workpad body whenever a checklist item is completed, a new task is discovered, or validation status meaningfully changes.
+    - Prefer frequent full-body syncs over deferred stage-end summaries.
     - Never leave completed work unchecked in the plan.
 5.  Run validation/tests required for the scope.
     - Mandatory gate: execute all ticket-provided `Validation`/`Test Plan`/ `Testing` requirements when present; treat unmet items as incomplete work.

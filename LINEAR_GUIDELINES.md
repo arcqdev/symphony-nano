@@ -35,9 +35,9 @@ linear issue update ENG-123 -s "BLOCKED - requires human"
 
 - Use exactly one persistent `## Codex Workpad` comment per issue.
 - Reuse the existing workpad when present.
-- Do not update the workpad after every checkbox or minor milestone.
-- Finish the current stage, then write one compact update that reflects the completed stage.
-- Compact updates are full comment rewrites, not differential edits.
+- Rewrite the full workpad body in place; do not attempt differential comment edits.
+- Update the workpad whenever a checklist item is completed, a new task is discovered, or validation status materially changes.
+- Prefer frequent full-body rewrites over deferred stage-end summaries.
 - When the runtime exposes `sync_workpad`, prefer it over inline multi-line comment update payloads.
 - Keep the markdown body in a workspace file, then call `sync_workpad(issue_id, file_path, comment_id?)`.
 - Keep the workpad focused on current status, current plan, validation summary, blockers, and final proof.

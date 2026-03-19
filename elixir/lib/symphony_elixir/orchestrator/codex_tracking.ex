@@ -166,8 +166,7 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
         codex_output_tokens: codex_output_tokens + token_delta.output_tokens,
         codex_total_tokens: codex_total_tokens + token_delta.total_tokens,
         codex_last_reported_input_tokens: max(last_reported_input, token_delta.input_reported),
-        codex_last_reported_cached_input_tokens:
-          max(last_reported_cached_input, token_delta.cached_input_reported),
+        codex_last_reported_cached_input_tokens: max(last_reported_cached_input, token_delta.cached_input_reported),
         codex_last_reported_output_tokens: max(last_reported_output, token_delta.output_reported),
         codex_last_reported_total_tokens: max(last_reported_total, token_delta.total_reported),
         turn_count: turn_count_for_update(turn_count, running_entry.session_id, update),
@@ -339,6 +338,7 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
 
   defp apply_token_delta(codex_totals, token_delta) do
     input_tokens = Map.get(codex_totals, :input_tokens, 0) + token_delta.input_tokens
+
     cached_input_tokens =
       Map.get(codex_totals, :cached_input_tokens, 0) + Map.get(token_delta, :cached_input_tokens, 0)
 
@@ -591,11 +591,19 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
 
   defp get_token_usage(usage, :cached_input),
     do:
-      payload_get(usage, [
+      sum_token_usage_fields(usage, [
         "cached_input_tokens",
         :cached_input_tokens,
         "cachedInputTokens",
-        :cachedInputTokens
+        :cachedInputTokens,
+        "cachedReadTokens",
+        :cachedReadTokens,
+        "cachedWriteTokens",
+        :cachedWriteTokens,
+        "cache_read_input_tokens",
+        :cache_read_input_tokens,
+        "cache_creation_input_tokens",
+        :cache_creation_input_tokens
       ])
 
   defp get_token_usage(usage, :output),
@@ -629,6 +637,18 @@ defmodule SymphonyElixir.Orchestrator.CodexTracking do
   end
 
   defp payload_get(payload, field), do: map_integer_value(payload, field)
+
+  defp sum_token_usage_fields(payload, fields) when is_list(fields) do
+    values =
+      fields
+      |> Enum.map(&map_integer_value(payload, &1))
+      |> Enum.reject(&is_nil/1)
+
+    case values do
+      [] -> nil
+      _ -> Enum.sum(values)
+    end
+  end
 
   defp map_integer_value(payload, field) do
     if is_map(payload) do

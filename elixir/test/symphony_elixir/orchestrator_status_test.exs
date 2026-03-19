@@ -101,6 +101,11 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
              message: %{method: "some-event"},
              timestamp: now
            }
+
+    assert snapshot_entry.session_log_lines == [
+             "[#{DateTime.to_iso8601(DateTime.truncate(now, :second))}] notification: %{method: \"some-event\"}",
+             "[#{DateTime.to_iso8601(DateTime.truncate(now, :second))}] session_started: session started"
+           ]
   end
 
   test "codex tracking stores raw session log lines for full tail views" do
@@ -382,6 +387,91 @@ defmodule SymphonyElixir.OrchestratorStatusTest do
     assert completed_state.codex_totals.input_tokens == 12
     assert completed_state.codex_totals.output_tokens == 4
     assert completed_state.codex_totals.total_tokens == 16
+  end
+
+  test "orchestrator snapshot tracks ACP turn completed usage with Claude cached token fields" do
+    issue_id = "issue-acp-turn-completed-usage"
+
+    issue = %Issue{
+      id: issue_id,
+      identifier: "MT-202A",
+      title: "ACP turn completed usage test",
+      description: "Track Claude ACP final usage",
+      state: "In Progress",
+      url: "https://example.org/issues/MT-202A"
+    }
+
+    orchestrator_name = Module.concat(__MODULE__, :AcpTurnCompletedUsageOrchestrator)
+    {:ok, pid} = Orchestrator.start_link(name: orchestrator_name)
+
+    on_exit(fn ->
+      if Process.alive?(pid) do
+        Process.exit(pid, :normal)
+      end
+    end)
+
+    initial_state = :sys.get_state(pid)
+    process_ref = make_ref()
+    started_at = DateTime.utc_now()
+
+    running_entry = %{
+      pid: self(),
+      ref: process_ref,
+      identifier: issue.identifier,
+      issue: issue,
+      session_id: nil,
+      last_codex_message: nil,
+      last_codex_timestamp: nil,
+      last_codex_event: nil,
+      codex_input_tokens: 0,
+      codex_cached_input_tokens: 0,
+      codex_output_tokens: 0,
+      codex_total_tokens: 0,
+      codex_last_reported_input_tokens: 0,
+      codex_last_reported_cached_input_tokens: 0,
+      codex_last_reported_output_tokens: 0,
+      codex_last_reported_total_tokens: 0,
+      started_at: started_at
+    }
+
+    :sys.replace_state(pid, fn _ ->
+      initial_state
+      |> Map.put(:running, %{issue_id => running_entry})
+      |> Map.put(:claimed, MapSet.put(initial_state.claimed, issue_id))
+    end)
+
+    send(
+      pid,
+      {:codex_worker_update, issue_id,
+       %{
+         event: :turn_completed,
+         payload: %{
+           "method" => "turn/completed",
+           "usage" => %{
+             "inputTokens" => 12,
+             "outputTokens" => 4,
+             "cachedReadTokens" => 3,
+             "cachedWriteTokens" => 2,
+             "totalTokens" => 21
+           }
+         },
+         timestamp: DateTime.utc_now()
+       }}
+    )
+
+    snapshot = GenServer.call(pid, :snapshot)
+    assert %{running: [snapshot_entry]} = snapshot
+    assert snapshot_entry.codex_input_tokens == 12
+    assert snapshot_entry.codex_cached_input_tokens == 5
+    assert snapshot_entry.codex_output_tokens == 4
+    assert snapshot_entry.codex_total_tokens == 21
+
+    send(pid, {:DOWN, process_ref, :process, self(), :normal})
+    completed_state = :sys.get_state(pid)
+    assert completed_state.codex_totals.input_tokens == 12
+    assert completed_state.codex_totals.cached_input_tokens == 5
+    assert completed_state.codex_totals.output_tokens == 4
+    assert completed_state.codex_totals.total_tokens == 21
   end
 
   test "orchestrator snapshot tracks codex token-count cumulative usage payloads" do

@@ -595,6 +595,7 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "backend" => nil,
                  "issue_id" => "issue-http",
                  "issue_identifier" => "MT-HTTP",
+                 "issue_url" => "https://linear.app/acme/issue/MT-HTTP/test-http",
                  "state" => "In Progress",
                  "worker_host" => nil,
                  "workspace_path" => nil,
@@ -605,13 +606,14 @@ defmodule SymphonyElixir.ExtensionsTest do
                  "started_at" => state_payload["running"] |> List.first() |> Map.fetch!("started_at"),
                  "last_event_at" => nil,
                  "stage" => nil,
-                 "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
+                 "tokens" => %{"input_tokens" => 4, "cached_input_tokens" => 0, "output_tokens" => 8, "total_tokens" => 12}
                }
              ],
              "retrying" => [
                %{
                  "issue_id" => "issue-retry",
                  "issue_identifier" => "MT-RETRY",
+                 "issue_url" => "https://linear.app/acme/issue/MT-RETRY/test-retry",
                  "attempt" => 2,
                  "due_at" => state_payload["retrying"] |> List.first() |> Map.fetch!("due_at"),
                  "error" => "boom",
@@ -652,7 +654,7 @@ defmodule SymphonyElixir.ExtensionsTest do
                "last_message" => "rendered",
                "last_event_at" => nil,
                "stage" => nil,
-               "tokens" => %{"input_tokens" => 4, "output_tokens" => 8, "total_tokens" => 12}
+               "tokens" => %{"input_tokens" => 4, "cached_input_tokens" => 0, "output_tokens" => 8, "total_tokens" => 12}
              },
              "retry" => nil,
              "logs" => %{"codex_session_logs" => []},
@@ -854,6 +856,7 @@ defmodule SymphonyElixir.ExtensionsTest do
     assert html =~ "Offline"
     assert html =~ "Linear project"
     assert html =~ "Symphony Core"
+    assert html =~ "https://linear.app/acme/issue/MT-HTTP/test-http"
     assert html =~ "Copy ID"
     assert html =~ "Codex update"
     refute html =~ "data-runtime-clock="
@@ -998,6 +1001,7 @@ defmodule SymphonyElixir.ExtensionsTest do
         %{
           issue_id: "issue-http",
           identifier: "MT-HTTP",
+          url: "https://linear.app/acme/issue/MT-HTTP/test-http",
           state: "In Progress",
           session_id: "thread-http",
           turn_count: 7,
@@ -1015,6 +1019,7 @@ defmodule SymphonyElixir.ExtensionsTest do
         %{
           issue_id: "issue-retry",
           identifier: "MT-RETRY",
+          url: "https://linear.app/acme/issue/MT-RETRY/test-retry",
           attempt: 2,
           due_in_ms: 2_000,
           error: "boom"

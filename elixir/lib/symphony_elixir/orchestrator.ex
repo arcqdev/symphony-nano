@@ -588,6 +588,7 @@ defmodule SymphonyElixir.Orchestrator do
           last_codex_timestamp: metadata.last_codex_timestamp,
           last_codex_message: metadata.last_codex_message,
           last_codex_event: metadata.last_codex_event,
+          session_log_lines: Map.get(metadata, :session_log_lines, []),
           runtime_seconds: CodexTracking.running_seconds(metadata.started_at, now)
         }
       end)

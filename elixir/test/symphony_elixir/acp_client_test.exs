@@ -53,7 +53,7 @@ defmodule SymphonyElixir.AcpClientTest do
             printf '%s\\n' '{"jsonrpc":"2.0","id":"perm-1","method":"session/request_permission","params":{"sessionId":"session-1","options":[{"optionId":"allow_always"},{"optionId":"reject"}]}}'
             ;;
           4)
-            printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn"}}\\n' "$prompt_request_id"
+            printf '{"jsonrpc":"2.0","id":%s,"result":{"stopReason":"end_turn","usage":{"inputTokens":12,"outputTokens":4,"cachedReadTokens":3,"cachedWriteTokens":2,"totalTokens":21}}}\\n' "$prompt_request_id"
             exit 0
             ;;
           *)
@@ -103,12 +103,41 @@ defmodule SymphonyElixir.AcpClientTest do
         assert result.stop_reason == "end_turn"
         assert result.thread_id == "session-1"
 
+        assert result.usage == %{
+                 "inputTokens" => 12,
+                 "outputTokens" => 4,
+                 "cachedReadTokens" => 3,
+                 "cachedWriteTokens" => 2,
+                 "totalTokens" => 21
+               }
+
         assert_receive {:acp_message, %{event: :session_started, backend: "claude-code", thread_id: "session-1"}}
         assert_receive {:acp_message, %{event: :notification, payload: %{"method" => "session/update"}}}
 
         assert_receive {:acp_message, %{event: :notification, payload: %{"method" => "session/request_permission"}}}
 
-        assert_receive {:acp_message, %{event: :turn_completed, stop_reason: "end_turn"}}
+        assert_receive {:acp_message,
+                        %{
+                          event: :turn_completed,
+                          stop_reason: "end_turn",
+                          usage: %{
+                            "inputTokens" => 12,
+                            "outputTokens" => 4,
+                            "cachedReadTokens" => 3,
+                            "cachedWriteTokens" => 2,
+                            "totalTokens" => 21
+                          },
+                          payload: %{
+                            "method" => "turn/completed",
+                            "usage" => %{
+                              "inputTokens" => 12,
+                              "outputTokens" => 4,
+                              "cachedReadTokens" => 3,
+                              "cachedWriteTokens" => 2,
+                              "totalTokens" => 21
+                            }
+                          }
+                        }}
 
         trace_payloads =
           trace_file

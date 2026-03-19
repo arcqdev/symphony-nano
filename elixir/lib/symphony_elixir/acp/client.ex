@@ -134,7 +134,7 @@ defmodule SymphonyElixir.Acp.Client do
     })
 
     case await_turn_completion(port, prompt_request_id, on_message, session, bypass_permissions, combined_id) do
-      {:ok, stop_reason} ->
+      {:ok, %{stop_reason: stop_reason, usage: usage}} ->
         Logger.info("ACP session completed for #{issue_context(issue)} session_id=#{combined_id} backend=#{backend} stop_reason=#{stop_reason}")
 
         emit_message(
@@ -143,7 +143,12 @@ defmodule SymphonyElixir.Acp.Client do
           %{
             backend: backend,
             session_id: combined_id,
-            stop_reason: stop_reason
+            stop_reason: stop_reason,
+            usage: usage,
+            payload: %{
+              "method" => "turn/completed",
+              "usage" => usage
+            }
           },
           metadata
         )
@@ -154,6 +159,7 @@ defmodule SymphonyElixir.Acp.Client do
            result: normalize_stop_reason(stop_reason),
            session_id: combined_id,
            stop_reason: stop_reason,
+           usage: usage,
            thread_id: session_id,
            turn_id: turn_id
          }}
@@ -449,8 +455,12 @@ defmodule SymphonyElixir.Acp.Client do
          stall_deadline_ms
        ) do
     case Jason.decode(payload_string) do
-      {:ok, %{"id" => ^prompt_request_id, "result" => %{"stopReason" => stop_reason}}} ->
-        {:ok, stop_reason}
+      {:ok, %{"id" => ^prompt_request_id, "result" => %{"stopReason" => stop_reason} = result}} ->
+        {:ok,
+         %{
+           stop_reason: stop_reason,
+           usage: Map.get(result, "usage")
+         }}
 
       {:ok, %{"id" => ^prompt_request_id, "error" => error}} ->
         {:error, normalize_rpc_error(error)}
